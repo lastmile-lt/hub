@@ -1,5 +1,5 @@
 export async function readBoundedRequestBody(
-  request: Request,
+  request: Pick<Request, "headers" | "body">,
   maxBytes: number,
 ): Promise<Uint8Array | Response> {
   const declaredLength = request.headers.get("content-length");

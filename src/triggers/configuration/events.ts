@@ -13,8 +13,9 @@ export interface QualifierDefinition {
 }
 
 interface EventDefinition {
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule" | "plain";
   label: string;
+  connectionRequired: boolean;
   origin: "hub" | "provider";
   qualifiers: readonly QualifierDefinition[];
 }
@@ -37,6 +38,7 @@ function event(
     provider,
     label,
     qualifiers,
+    connectionRequired: !["plain", "manual", "schedule"].includes(provider),
     origin: provider === "manual" || provider === "schedule" ? "hub" : "provider",
   };
 }
@@ -64,6 +66,8 @@ const EVENTS = {
   "linear.comment_created": event("linear", "Linear comment created"),
   "linear.agent_session": event("linear", "Linear agent session"),
   "schedule.tick": event("schedule", "Schedule"),
+  "plain.discussion": event("plain", "Plain internal discussion"),
+  "plain.note": event("plain", "Plain note mention"),
   "manual.run": event("manual", "Manual run"),
 };
 

@@ -19,7 +19,7 @@ export type WorkflowDeadlineKind = "step_hard" | "step_idle" | "whole_run";
 export interface ProviderEventReceiptRecord {
   id: string;
   organizationId: string;
-  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule";
+  provider: "github" | "slack" | "discord" | "linear" | "manual" | "schedule" | "plain";
   connectionId: string | null;
   resourceId: string | null;
   deliveryId: string;
@@ -666,6 +666,17 @@ export interface AcceptLinearEventInput extends ProviderEventEvidence {
 export interface PersistManualEventInput extends InsertProviderEventInput {
   organizationId: string;
   projectId: string;
+}
+
+export interface PlainEventBinding {
+  organizationId: string;
+  projectId: string;
+  workspaceId: string;
+  agentId: string;
+}
+export interface PlainTurnLocator extends PlainEventBinding {
+  conversationKey: string;
+  timestamp: string;
 }
 
 export type ManualEventPersistence =
@@ -1347,6 +1358,10 @@ export interface Database {
   acceptSlackEvent(input: AcceptSlackEventInput): Promise<ProviderEventAcceptance>;
   acceptLinearEvent(input: AcceptLinearEventInput): Promise<ProviderEventAcceptance>;
   persistManualEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
+  persistPlainEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
+  pendingPlainEvents(binding: PlainEventBinding): Promise<DurableProviderEvent[]>;
+  markPlainEventProcessed(receiptId: string): Promise<void>;
+  isPlainTurnStopped(turn: PlainTurnLocator): Promise<boolean>;
   claimGitHubLifecycleReceipt(
     input: GitHubLifecycleReceiptClaimInput,
   ): Promise<GitHubLifecycleReceiptClaim>;

@@ -20,6 +20,8 @@ import type {
   ProviderEventAcceptance,
   ProviderEventEvidence,
   ProviderEventRouteSnapshot,
+  PlainEventBinding,
+  PlainTurnLocator,
 } from "./types.js";
 
 type HubDatabase = DrizzleHandle;
@@ -194,6 +196,73 @@ export class ProviderEventAcceptanceRepository {
   }
 
   persistManual(input: PersistManualEventInput): Promise<ManualEventPersistence> {
+    return this.persistBoundEvent("manual", input);
+  }
+
+  persistPlain(input: PersistManualEventInput): Promise<ManualEventPersistence> {
+    return this.persistBoundEvent("plain", input);
+  }
+
+  async pendingPlainEvents(binding: PlainEventBinding) {
+    const receipts = await this.database
+      .select()
+      .from(schema.providerEventReceipts)
+      .where(
+        and(
+          eq(schema.providerEventReceipts.provider, "plain"),
+          eq(schema.providerEventReceipts.organizationId, binding.organizationId),
+          isNull(schema.providerEventReceipts.plainProcessedAt),
+          sql`${schema.providerEventReceipts.payload} ->> 'workspaceId' = ${binding.workspaceId}`,
+          sql`${schema.providerEventReceipts.payload} ->> 'agentId' = ${binding.agentId}`,
+          sql`${schema.providerEventReceipts.acceptedRoutes} @> ${JSON.stringify([{ projectId: binding.projectId }])}::jsonb`,
+        ),
+      )
+      .orderBy(
+        sql`case when ${schema.providerEventReceipts.source} = 'plain.stop' then 0 else 1 end`,
+        schema.providerEventReceipts.receivedAt,
+      )
+      .limit(50);
+    return receipts.flatMap((receipt) =>
+      (parseAcceptedRoutes(receipt.acceptedRoutes) ?? [])
+        .filter((route) => route.projectId === binding.projectId)
+        .map((route) => eventFromReceipt(receipt, route)),
+    );
+  }
+
+  async markPlainEventProcessed(receiptId: string): Promise<void> {
+    await this.database
+      .update(schema.providerEventReceipts)
+      .set({ plainProcessedAt: new Date() })
+      .where(
+        and(
+          eq(schema.providerEventReceipts.id, receiptId),
+          eq(schema.providerEventReceipts.provider, "plain"),
+        ),
+      );
+  }
+
+  async isPlainTurnStopped(turn: PlainTurnLocator): Promise<boolean> {
+    const [receipt] = await this.database
+      .select({ id: schema.providerEventReceipts.id })
+      .from(schema.providerEventReceipts)
+      .where(
+        and(
+          eq(schema.providerEventReceipts.provider, "plain"),
+          eq(schema.providerEventReceipts.organizationId, turn.organizationId),
+          eq(schema.providerEventReceipts.source, "plain.stop"),
+          eq(schema.providerEventReceipts.resourceId, turn.conversationKey),
+          sql`${schema.providerEventReceipts.acceptedRoutes} @> ${JSON.stringify([{ projectId: turn.projectId }])}::jsonb`,
+          sql`(${schema.providerEventReceipts.payload} ->> 'timestamp')::timestamptz >= ${turn.timestamp}::timestamptz`,
+        ),
+      )
+      .limit(1);
+    return receipt !== undefined;
+  }
+
+  private persistBoundEvent(
+    provider: "manual" | "plain",
+    input: PersistManualEventInput,
+  ): Promise<ManualEventPersistence> {
     return this.database.transaction(async (transaction) => {
       const existing = await findReceipt(transaction, input, input.organizationId);
       if (existing !== undefined) {
@@ -227,9 +296,9 @@ export class ProviderEventAcceptanceRepository {
       };
       const receipt = await claimProviderReceipt(transaction, {
         organizationId: input.organizationId,
-        provider: "manual",
+        provider,
         connectionId: null,
-        resourceId: null,
+        resourceId: input.resourceId ?? null,
         input,
       });
       if (!receipt.inserted) {
@@ -701,7 +770,7 @@ async function claimProviderReceipt(
   transaction: HubTransaction,
   input: {
     organizationId: string;
-    provider: "github" | "slack" | "discord" | "linear" | "manual";
+    provider: "github" | "slack" | "discord" | "linear" | "manual" | "plain";
     connectionId: string | null;
     resourceId: string | null;
     input: ProviderEventEvidence;

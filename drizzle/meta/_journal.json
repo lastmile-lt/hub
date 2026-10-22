@@ -351,6 +351,13 @@
       "when": 1789163224760,
       "tag": "0049_big_black_bolt",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792683393349,
+      "tag": "0050_curious_snowbird",
+      "breakpoints": true
     }
   ]
 }

@@ -1,3 +1,5 @@
+import { createPlainRegistration } from "./providers/plain/index.js";
+import { readPlainConfiguration } from "./providers/plain/config.js";
 import { randomBytes } from "node:crypto";
 import { validateHeaderName, type IncomingMessage } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -152,12 +154,18 @@ async function createProductionRuntime(): Promise<ApplicationRuntime> {
         return begin(new Request(url, { method: "POST", headers: request.headers }));
       },
     });
+    const plainConfiguration = await readPlainConfiguration(process.env);
     const application = await createApplicationRuntime({
       database,
       auth,
       entitlements: entitlements.service,
       billing,
-      registrations: providerRuntime.registrations(),
+      registrations: [
+        ...providerRuntime.registrations(),
+        ...(plainConfiguration === undefined
+          ? []
+          : [await createPlainRegistration({ database, configuration: plainConfiguration })]),
+      ],
       providerApplications,
       publicBaseUrl: identity.appUrl,
       completionTokenSecret: identity.authSecret,

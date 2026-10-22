@@ -1388,6 +1388,15 @@ function validateAuthoredIds(config: AuthoredHubConfig): void {
 }
 
 function validateTriggerLaunchSecurity(trigger: CompiledTrigger): void {
+  if (trigger.on.startsWith("plain.")) {
+    if (!["plain.discussion", "plain.note"].includes(trigger.on))
+      throw new Error(`unsupported Plain trigger event: ${trigger.on}`);
+    const unsupported = Object.keys(trigger.filters ?? {}).filter(
+      (key) => !["from_users", "workspace", "contains", "inputs"].includes(key),
+    );
+    if (unsupported.length > 0)
+      throw new Error(`unsupported Plain trigger filters: ${unsupported.join(", ")}`);
+  }
   if (isEditorEvent(trigger.on) && eventDefinition(trigger.on).origin === "hub") return;
   // A project scout is an intentionally autonomous, project-scoped policy. Every other
   // externally-originated Linear action remains actor-allowlisted below.

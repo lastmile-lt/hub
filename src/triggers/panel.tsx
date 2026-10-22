@@ -664,7 +664,7 @@ function TriggerForm({
                 />
               )}
             </FormField>
-            {eventDefinition(form.event).origin === "hub" ? null : (
+            {!eventDefinition(form.event).connectionRequired ? null : (
               <FormField
                 id="trigger-connection"
                 label="Connection"
