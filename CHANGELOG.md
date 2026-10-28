@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0-pickitoo.4 - 2026-10-28
+
+### Fixed
+
+- Unsupported methods on the agent session MCP route return 405 instead of a 500, so every agent session no longer logs an error when its MCP client opens the optional SSE stream.
+
 ## 0.10.0-pickitoo.3 - 2026-10-23
 
 ### Fixed
