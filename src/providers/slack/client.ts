@@ -10,6 +10,12 @@ export const SLACK_REQUIRED_BOT_SCOPES = [
   "users:read",
 ] as const;
 
+/**
+ * Requested on install but not required, so an install from before direct messages keeps working:
+ * without `im:history` Slack just sends no `message.im` events and DM threads are unreadable.
+ */
+export const SLACK_REQUESTED_BOT_SCOPES = [...SLACK_REQUIRED_BOT_SCOPES, "im:history"] as const;
+
 const SlackOAuthResponseSchema = z
   .object({
     ok: z.boolean(),
@@ -65,7 +71,7 @@ export function createSlackConnectionClient(options: {
     authorizationUrl(state) {
       const parameters = new URLSearchParams({
         client_id: options.clientId,
-        scope: SLACK_REQUIRED_BOT_SCOPES.join(","),
+        scope: SLACK_REQUESTED_BOT_SCOPES.join(","),
         redirect_uri: redirectUri,
         state,
       });

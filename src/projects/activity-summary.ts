@@ -10,7 +10,7 @@ import {
   readGitHubTriggerUrl,
 } from "../auth/github-events.js";
 import { NormalizedDiscordMessageEventSchema } from "../triggers/discord/events.js";
-import { NormalizedSlackMentionEventSchema } from "../triggers/slack/events.js";
+import { NormalizedSlackEventSchema } from "../triggers/slack/events.js";
 import { NormalizedLinearEventSchema } from "../triggers/linear/events.js";
 import { classifyGitHubEvent } from "../triggers/github/classification.js";
 
@@ -147,14 +147,15 @@ function summarizePush(payload: unknown): GitHubHeadline {
 }
 
 function summarizeSlack(payload: unknown): TriggerSummary {
-  const event = NormalizedSlackMentionEventSchema.safeParse(payload);
+  const event = NormalizedSlackEventSchema.safeParse(payload);
   if (!event.success) {
     return { provider: "slack", headline: "Slack mention", actor: null, externalUrl: null };
   }
   const content = event.data.content.trim();
+  const fallback = event.data.type === "mention" ? "Slack mention" : "Slack direct message";
   return {
     provider: "slack",
-    headline: content.length > 0 ? truncate(content, 96) : "Slack mention",
+    headline: content.length > 0 ? truncate(content, 96) : fallback,
     actor: null,
     externalUrl: null,
   };

@@ -12,7 +12,7 @@ import {
   type TriggerProviderReactionState,
 } from "../index.js";
 import type { SlackBotClient, SlackThreadMessage } from "./client.js";
-import { NormalizedSlackMentionEventSchema, type NormalizedSlackMentionEvent } from "./events.js";
+import { NormalizedSlackEventSchema, type NormalizedSlackEvent } from "./events.js";
 import {
   matchSlackTriggers,
   readSlackInvocationParserMessage,
@@ -36,7 +36,7 @@ interface SlackThreadContextLocator {
 
 export interface SlackMergeData {
   slack: {
-    event_type: "app_mention";
+    event_type: "app_mention" | "message";
     event_id: string;
     event_ts: string;
     event_time: number;
@@ -107,9 +107,9 @@ export function createSlackTriggerProvider(options: {
 }): TriggerProvider<"slack", SlackTriggerContext, SlackOutputContext, SlackMaterializedContext> {
   return {
     name: "slack",
-    eventNames: ["slack.mention"],
+    eventNames: ["slack.mention", "slack.direct_message"],
     async match(trigger) {
-      const rawEvent = NormalizedSlackMentionEventSchema.parse(trigger.payload);
+      const rawEvent = NormalizedSlackEventSchema.parse(trigger.payload);
       const botUserId = await options.botUserIdForWorkspace(
         trigger.organizationId,
         rawEvent.teamId,
@@ -121,7 +121,11 @@ export function createSlackTriggerProvider(options: {
       if (stored === undefined) return "configuration_unavailable";
       if (!stored.configuration.triggers.some((candidate) => candidate.on === trigger.source))
         return "no_trigger_for_source";
-      const event = needsSlackUsername(stored.configuration.triggers, rawEvent.author.id)
+      const event = needsSlackUsername(
+        stored.configuration.triggers,
+        trigger.source,
+        rawEvent.author.id,
+      )
         ? await enrichSlackAuthor(rawEvent, trigger.organizationId, options.client)
         : rawEvent;
       const matchedTriggers = matchSlackTriggers(
@@ -301,10 +305,10 @@ export function createSlackTriggerProvider(options: {
 }
 
 async function enrichSlackAuthor(
-  event: NormalizedSlackMentionEvent,
+  event: NormalizedSlackEvent,
   organizationId: string,
   client: SlackBotClient,
-): Promise<NormalizedSlackMentionEvent> {
+): Promise<NormalizedSlackEvent> {
   if (client.lookupUserName === undefined) return event;
   try {
     const username = await client.lookupUserName({
@@ -325,11 +329,12 @@ async function enrichSlackAuthor(
 
 function needsSlackUsername(
   triggers: readonly Pick<CompiledTriggerConfig, "on" | "filters">[],
+  source: string,
   authorId: string,
 ): boolean {
   return triggers.some(
     (candidate) =>
-      candidate.on === "slack.mention" &&
+      candidate.on === source &&
       candidate.filters?.from_users !== undefined &&
       !candidate.filters.from_users.includes("*") &&
       !candidate.filters.from_users.includes(authorId),
@@ -366,13 +371,13 @@ function slackReactionPhase(
 }
 
 function buildSlackMergeData(
-  event: NormalizedSlackMentionEvent,
+  event: NormalizedSlackEvent,
   botUserId: string,
   connectionId: string | null | undefined,
 ): SlackMergeData {
   return {
     slack: {
-      event_type: "app_mention",
+      event_type: event.type === "mention" ? "app_mention" : "message",
       event_id: event.id,
       event_ts: event.eventTs,
       event_time: event.eventTime,

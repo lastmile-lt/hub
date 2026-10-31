@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import { load } from "js-yaml";
 import { z } from "zod";
-import { SLACK_REQUIRED_BOT_SCOPES } from "../providers/slack/client.js";
+import { SLACK_REQUESTED_BOT_SCOPES } from "../providers/slack/client.js";
 import {
   PROVIDER_GUIDES,
   guideFields,
@@ -24,16 +24,18 @@ const webhookManifestSchema = z.object({
     redirect_urls: z.array(z.string()),
     scopes: z.object({ bot: z.array(z.string()) }),
   }),
-  settings: z.object({ event_subscriptions: z.object({ request_url: z.string() }) }),
+  settings: z.object({
+    event_subscriptions: z.object({ request_url: z.string(), bot_events: z.array(z.string()) }),
+  }),
 });
 
 function stepText(step: GuideStep): string {
   return step.segments.map((segment) => segment.value).join("");
 }
 
-test("the Slack manifest asks for exactly the scopes Hub checks installations against", () => {
+test("the Slack manifest asks for exactly the scopes Hub requests on install", () => {
   const manifest = webhookManifestSchema.parse(load(slackManifest(ORIGIN, "webhook")));
-  assert.deepEqual(manifest.oauth_config.scopes.bot, [...SLACK_REQUIRED_BOT_SCOPES]);
+  assert.deepEqual(manifest.oauth_config.scopes.bot, [...SLACK_REQUESTED_BOT_SCOPES]);
   assert.deepEqual(manifest.oauth_config.redirect_urls, [
     `${ORIGIN}/api/integrations/slack/callback`,
   ]);
@@ -41,13 +43,14 @@ test("the Slack manifest asks for exactly the scopes Hub checks installations ag
     manifest.settings.event_subscriptions.request_url,
     `${ORIGIN}/api/integrations/slack/events`,
   );
+  assert.deepEqual(manifest.settings.event_subscriptions.bot_events, ["app_mention", "message.im"]);
   const socket = z
     .object({
       oauth_config: z.object({ scopes: z.object({ bot: z.array(z.string()) }) }),
       settings: z.object({ socket_mode_enabled: z.literal(true) }),
     })
     .parse(load(slackManifest(LOCAL, "socket")));
-  assert.deepEqual(socket.oauth_config.scopes.bot, [...SLACK_REQUIRED_BOT_SCOPES]);
+  assert.deepEqual(socket.oauth_config.scopes.bot, [...SLACK_REQUESTED_BOT_SCOPES]);
 });
 
 test("generated URLs are built from the resolved callback origin", () => {

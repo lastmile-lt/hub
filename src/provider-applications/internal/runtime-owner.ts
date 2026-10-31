@@ -641,7 +641,7 @@ function actionNames(provider: Provider): readonly string[] {
 }
 
 function eventNames(provider: Provider): TriggerProvider["eventNames"] {
-  if (provider === "slack") return ["slack.mention"];
+  if (provider === "slack") return ["slack.mention", "slack.direct_message"];
   if (provider === "discord") return ["discord.mention"];
   if (provider === "linear") return ["linear.issue", "linear.comment", "linear.agent_session"];
   return GITHUB_TRIGGER_SOURCE_NAMES;

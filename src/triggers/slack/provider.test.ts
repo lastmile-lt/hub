@@ -218,6 +218,58 @@ describe("Slack Phase 1 trigger provider", () => {
     assert.equal(match.outputContext.messageTs, "1700000000.000001");
   });
 
+  it("routes a direct message thread reply to a slack.direct_message trigger", async () => {
+    const database = createMemoryDatabase();
+    const base = configuration();
+    const { project, revision, store } = await createActiveProjectConfiguration(
+      database,
+      {
+        ...base,
+        triggers: [
+          {
+            ...base.triggers[0]!,
+            on: "slack.direct_message",
+            filters: { workspace: "T1", from_users: ["U1"] },
+          },
+        ],
+      },
+      { organizationId: "org-1" },
+    );
+    const provider = createSlackTriggerProvider({
+      configurationStoreForProject: () => store,
+      botUserIdForWorkspace: () => Promise.resolve("UBOT"),
+      client: new RecordingSlackClient(),
+    });
+    const dm = external(project.id, revision.id, {
+      messageTs: "1700000000.000002",
+      content: "check the totals",
+    });
+    const event = {
+      ...dm,
+      source: "slack.direct_message",
+      payload: { ...dm.payload, type: "direct_message", channelId: "D1" },
+    };
+
+    const match = (await provider.match(event))[0];
+
+    if (!isAcceptedTriggerProviderMatch(match)) throw new Error("expected accepted match");
+    assert.equal(match.triggerContext.event.slack.event_type, "message");
+    assert.equal(match.triggerContext.event.slack.trigger_message.body, "check the totals");
+    assert.equal(
+      match.conversation?.key,
+      JSON.stringify(["slack", "T1", "D1", "1700000000.000001"]),
+    );
+    assert.deepEqual(match.outputContext, {
+      provider: "slack",
+      organizationId: "org-1",
+      teamId: "T1",
+      channelId: "D1",
+      threadTs: "1700000000.000001",
+      messageTs: "1700000000.000002",
+    });
+    assert.equal(await provider.match(dm), "no_trigger_for_source");
+  });
+
   it("keeps provider reactions idempotent across the durable lifecycle hooks", async () => {
     const database = createMemoryDatabase();
     const { project, revision, store } = await createActiveProjectConfiguration(

@@ -1,6 +1,9 @@
 display_information:
   name: Paseo
 features:
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: Paseo
     always_online: false
@@ -12,12 +15,14 @@ oauth_config:
       - chat:write
       - files:read
       - groups:history
+      - im:history
       - reactions:write
       - users:read
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
+      - message.im
   interactivity:
     is_enabled: false
   org_deploy_enabled: false
