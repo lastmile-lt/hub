@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { compileHubConfig } from "../../config/index.js";
-import type { NormalizedSlackMentionEvent } from "./events.js";
+import type { NormalizedSlackEvent } from "./events.js";
 import { matchSlackTriggers, readSlackPromptBody } from "./match.js";
 
 describe("Slack trigger matching", () => {
@@ -62,17 +62,40 @@ describe("Slack trigger matching", () => {
     );
     assert.equal(matchSlackTriggers(config, { ...event, content: "run tests" }, "UBOT").length, 0);
   });
+
+  it("matches direct messages only to slack.direct_message triggers, without a bot mention", () => {
+    const mentions = configForUsers(["*"]);
+    const directMessages = configForUsers(["*"], "slack.direct_message", "D1");
+    const dm: NormalizedSlackEvent = {
+      ...mention(),
+      type: "direct_message",
+      channelId: "D1",
+      content: "check the totals",
+    };
+
+    assert.equal(matchSlackTriggers(directMessages, dm, "UBOT").length, 1);
+    assert.equal(readSlackPromptBody(dm, "UBOT"), "check the totals");
+    assert.equal(matchSlackTriggers(mentions, { ...dm, channelId: "C1" }, "UBOT").length, 0);
+    assert.equal(
+      matchSlackTriggers(directMessages, { ...mention(), channelId: "D1" }, "UBOT").length,
+      0,
+    );
+    assert.equal(
+      matchSlackTriggers(directMessages, { ...dm, author: { id: "UBOT" } }, "UBOT").length,
+      0,
+    );
+  });
 });
 
-function configForUsers(fromUsers: string[]) {
+function configForUsers(fromUsers: string[], on = "slack.mention", channel = "C1") {
   return compileHubConfig({
     environments: [{ name: "runner", kind: "daemon", daemon: "runner", cwd: "/repo" }],
     triggers: [
       {
         name: "slack-run",
-        on: "slack.mention",
+        on,
         max_runtime: "2h",
-        filters: { workspace: "T1", channels: ["C1"], from_users: fromUsers },
+        filters: { workspace: "T1", channels: [channel], from_users: fromUsers },
         steps: [
           {
             id: "run",
@@ -88,9 +111,7 @@ function configForUsers(fromUsers: string[]) {
   });
 }
 
-function mention(
-  overrides: { authorId?: string; username?: string } = {},
-): NormalizedSlackMentionEvent {
+function mention(overrides: { authorId?: string; username?: string } = {}): NormalizedSlackEvent {
   return {
     type: "mention",
     id: "Ev1",

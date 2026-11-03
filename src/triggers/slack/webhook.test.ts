@@ -107,6 +107,50 @@ describe("Slack webhook", () => {
     });
   });
 
+  it("accepts a person's direct message as slack.direct_message and ignores bot and edited DMs", async () => {
+    const accepted: { source: string; payload: unknown }[] = [];
+    const endpoint = source((input) => {
+      accepted.push({ source: input.source, payload: input.payload });
+      return Promise.resolve({
+        status: "accepted",
+        receiptId: input.deliveryId,
+        events: [],
+      });
+    });
+    await endpoint.start(() => Promise.reject(new Error("no events to dispatch")));
+
+    const dm = directMessageEnvelope();
+    assert.equal((await endpoint.handle(request(dm))).status, 200);
+    for (const event of [
+      { ...dm.event, bot_id: "B123" },
+      { ...dm.event, subtype: "message_changed" },
+      { ...dm.event, channel_type: "channel" },
+    ]) {
+      assert.equal((await endpoint.handle(request({ ...dm, event }))).status, 200);
+    }
+
+    assert.deepEqual(accepted, [
+      {
+        source: "slack.direct_message",
+        payload: {
+          type: "direct_message",
+          id: "Ev456",
+          teamId: "T123",
+          appId: APP_ID,
+          channelId: "D123",
+          messageTs: "1700000000.000200",
+          threadTs: "1699999999.000001",
+          eventTs: "1700000000.000200",
+          eventTime: 1_700_000_900,
+          content: "the fix looks wrong, check the totals",
+          author: { id: "U123" },
+          createdAt: "2023-11-14T22:13:20.000Z",
+          attachments: [],
+        },
+      },
+    ]);
+  });
+
   it("acknowledges duplicate and unsupported signed events", async () => {
     let accepts = 0;
     const endpoint = source(() => {
@@ -250,6 +294,26 @@ function mentionEnvelope() {
       ts: "1700000000.000100",
       thread_ts: "1699999999.000001",
       event_ts: "1700000000.000100",
+    },
+  };
+}
+
+function directMessageEnvelope() {
+  return {
+    type: "event_callback",
+    team_id: "T123",
+    api_app_id: APP_ID,
+    event_id: "Ev456",
+    event_time: 1_700_000_900,
+    event: {
+      type: "message",
+      channel_type: "im",
+      user: "U123",
+      channel: "D123",
+      text: "the fix looks wrong, check the totals",
+      ts: "1700000000.000200",
+      thread_ts: "1699999999.000001",
+      event_ts: "1700000000.000200",
     },
   };
 }

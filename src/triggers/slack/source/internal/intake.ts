@@ -2,7 +2,7 @@ import type { ProviderEventAcceptance } from "../../../../db/types.js";
 import { logProviderEventIntake } from "../../../audit.js";
 import type { ProviderEventDropReasonCode } from "../../../drop-reason.js";
 import type { TriggerHandler } from "../../../index.js";
-import { normalizeSlackEvent, SlackEventCallbackSchema } from "../../events.js";
+import { normalizeSlackEvent, SlackEventCallbackSchema, slackEventSource } from "../../events.js";
 
 export interface SlackEventIntakeOptions {
   appId: string;
@@ -37,18 +37,19 @@ export async function intakeSlackEvent(
   if (normalizedEvent === undefined) return;
 
   const deliveryId = `slack-${normalizedEvent.id}`;
+  const source = slackEventSource(normalizedEvent);
   const acceptance = await options.accept({
     teamId: normalizedEvent.teamId,
     deliveryId,
     signatureHash,
-    source: "slack.mention",
+    source,
     payload: normalizedEvent,
     receivedAt: new Date(normalizedEvent.eventTime * 1_000),
     ...(handlers.size === 0 ? { dropReason: "configuration_unavailable" } : {}),
   });
   logProviderEventIntake({
     provider: "slack",
-    source: "slack.mention",
+    source,
     deliveryId,
     resourceId: normalizedEvent.teamId,
     acceptance,

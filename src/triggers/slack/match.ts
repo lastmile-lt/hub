@@ -2,24 +2,24 @@ import type {
   CompiledTriggerConfig as CompiledTrigger,
   TriggerFilter,
 } from "../../config/index.js";
-import type { NormalizedSlackMentionEvent } from "./events.js";
+import { slackEventSource, type NormalizedSlackEvent } from "./events.js";
 
 type MatchedTriggerDefinition = Pick<CompiledTrigger, "name" | "on" | "filters">;
 
 export interface MatchedSlackTrigger {
-  event: NormalizedSlackMentionEvent;
+  event: NormalizedSlackEvent;
   trigger: MatchedTriggerDefinition;
 }
 
 export function matchSlackTriggers(
   config: { triggers: readonly MatchedTriggerDefinition[] },
-  event: NormalizedSlackMentionEvent,
+  event: NormalizedSlackEvent,
   botUserId: string,
   connectionId?: string | null,
 ): MatchedSlackTrigger[] {
   if (event.author.id === botUserId) return [];
   return config.triggers.flatMap((trigger) => {
-    return trigger.on === "slack.mention" &&
+    return trigger.on === slackEventSource(event) &&
       matchesFilters(event, trigger.filters, botUserId, connectionId)
       ? [{ event, trigger }]
       : [];
@@ -27,12 +27,13 @@ export function matchSlackTriggers(
 }
 
 function matchesFilters(
-  event: NormalizedSlackMentionEvent,
+  event: NormalizedSlackEvent,
   filters: TriggerFilter | undefined,
   botUserId: string,
   connectionId?: string | null,
 ): boolean {
-  if (filters === undefined || !event.content.includes(`<@${botUserId}>`)) return false;
+  if (filters === undefined) return false;
+  if (event.type === "mention" && !event.content.includes(`<@${botUserId}>`)) return false;
   if (
     filters.from_users === undefined ||
     (!filters.from_users.includes("*") &&
@@ -53,14 +54,14 @@ function matchesFilters(
   return nextCharacter === undefined || /\s/u.test(nextCharacter);
 }
 
-export function readSlackPromptBody(event: NormalizedSlackMentionEvent, botUserId: string): string {
+export function readSlackPromptBody(event: NormalizedSlackEvent, botUserId: string): string {
   const mention = `<@${botUserId}>`;
   const index = event.content.indexOf(mention);
   return index < 0 ? event.content : event.content.slice(index + mention.length).trimStart();
 }
 
 export function readSlackInvocationParserMessage(
-  event: NormalizedSlackMentionEvent,
+  event: NormalizedSlackEvent,
   botUserId: string,
   filters: TriggerFilter | undefined,
 ): string {

@@ -1,4 +1,4 @@
-import { SLACK_REQUIRED_BOT_SCOPES } from "../providers/slack/client.js";
+import { SLACK_REQUESTED_BOT_SCOPES } from "../providers/slack/client.js";
 import type { Provider, ProviderApplicationIdentity, ProviderApplicationStatus } from "./index.js";
 
 /**
@@ -698,12 +698,12 @@ export function guideUrl(origin: string, path: string): string {
 }
 
 /**
- * The manifest Slack reads. Scopes come from the same constant the running Slack integration
- * checks installations against, so a manifest the operator pastes can never ask for less than
- * Hub needs.
+ * The manifest Slack reads. Scopes come from the same constant Hub requests on install, which
+ * holds every scope it checks installations against, so a manifest the operator pastes can never
+ * ask for less than Hub needs.
  */
 export function slackManifest(origin: string, transport: "socket" | "webhook" = "socket"): string {
-  const scopes = SLACK_REQUIRED_BOT_SCOPES.map((scope) => `      - ${scope}`).join("\n");
+  const scopes = SLACK_REQUESTED_BOT_SCOPES.map((scope) => `      - ${scope}`).join("\n");
   const webhook =
     transport === "webhook"
       ? `  redirect_urls:\n    - ${origin}/api/integrations/slack/callback\n`
@@ -713,6 +713,9 @@ export function slackManifest(origin: string, transport: "socket" | "webhook" = 
   return `display_information:
   name: Paseo
 features:
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: Paseo
     always_online: false
@@ -724,6 +727,7 @@ settings:
   event_subscriptions:
 ${requestUrl}    bot_events:
       - app_mention
+      - message.im
   interactivity:
     is_enabled: false
   org_deploy_enabled: false

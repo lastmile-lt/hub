@@ -27,35 +27,50 @@ export const SlackEventCallbackSchema = z
   })
   .passthrough();
 
+const SlackMessageFields = {
+  user: SlackIdSchema,
+  channel: SlackIdSchema,
+  text: z.string(),
+  ts: SlackTimestampSchema,
+  event_ts: SlackTimestampSchema,
+  thread_ts: SlackTimestampSchema.optional(),
+  bot_id: SlackIdSchema.optional(),
+  subtype: z.string().optional(),
+  files: z
+    .array(
+      z
+        .object({
+          id: SlackIdSchema,
+          name: z.string().min(1).max(255).optional(),
+          title: z.string().min(1).max(255).optional(),
+          mimetype: z.string().max(255).optional(),
+          size: z.number().int().nonnegative().optional(),
+        })
+        .passthrough(),
+    )
+    .optional(),
+};
+
 const SlackAppMentionSchema = z
+  .object({ type: z.literal("app_mention"), ...SlackMessageFields })
+  .passthrough();
+
+// Slack never sends `app_mention` for a message in the app's own DM, only `message.im`.
+const SlackDirectMessageSchema = z
   .object({
-    type: z.literal("app_mention"),
-    user: SlackIdSchema,
-    channel: SlackIdSchema,
-    text: z.string(),
-    ts: SlackTimestampSchema,
-    event_ts: SlackTimestampSchema,
-    thread_ts: SlackTimestampSchema.optional(),
-    bot_id: SlackIdSchema.optional(),
-    subtype: z.string().optional(),
-    files: z
-      .array(
-        z
-          .object({
-            id: SlackIdSchema,
-            name: z.string().min(1).max(255).optional(),
-            title: z.string().min(1).max(255).optional(),
-            mimetype: z.string().max(255).optional(),
-            size: z.number().int().nonnegative().optional(),
-          })
-          .passthrough(),
-      )
-      .optional(),
+    type: z.literal("message"),
+    channel_type: z.literal("im"),
+    ...SlackMessageFields,
   })
   .passthrough();
 
-export const NormalizedSlackMentionEventSchema = z.object({
-  type: z.literal("mention"),
+const SlackMessageEventSchema = z.discriminatedUnion("type", [
+  SlackAppMentionSchema,
+  SlackDirectMessageSchema,
+]);
+
+export const NormalizedSlackEventSchema = z.object({
+  type: z.enum(["mention", "direct_message"]),
   id: SlackIdSchema,
   teamId: SlackIdSchema,
   appId: SlackIdSchema,
@@ -65,34 +80,51 @@ export const NormalizedSlackMentionEventSchema = z.object({
   eventTs: SlackTimestampSchema,
   eventTime: z.number().int().nonnegative(),
   content: z.string(),
-  author: z.object({ id: SlackIdSchema, username: z.string().min(1).max(255).optional() }),
+  author: z.object({
+    id: SlackIdSchema,
+    username: z.string().min(1).max(255).optional(),
+  }),
   createdAt: z.string(),
   attachments: z.array(SlackAttachmentMetadataSchema).default([]),
 });
 
-export type NormalizedSlackMentionEvent = z.infer<typeof NormalizedSlackMentionEventSchema>;
+export type NormalizedSlackEvent = z.infer<typeof NormalizedSlackEventSchema>;
+
+export function slackEventSource(
+  event: Pick<NormalizedSlackEvent, "type">,
+): "slack.mention" | "slack.direct_message" {
+  return event.type === "mention" ? "slack.mention" : "slack.direct_message";
+}
 
 export function normalizeSlackEvent(
   envelope: z.infer<typeof SlackEventCallbackSchema>,
-): NormalizedSlackMentionEvent | undefined {
-  const mention = SlackAppMentionSchema.safeParse(envelope.event);
-  if (!mention.success) return undefined;
-  if (mention.data.bot_id !== undefined || mention.data.subtype === "bot_message") return undefined;
+): NormalizedSlackEvent | undefined {
+  const parsed = SlackMessageEventSchema.safeParse(envelope.event);
+  if (!parsed.success) return undefined;
+  const message = parsed.data;
+  if (message.bot_id !== undefined || message.subtype === "bot_message") return undefined;
+  // Edits, deletions, joins and other DM subtypes are not something a person asked for.
+  if (
+    message.type === "message" &&
+    message.subtype !== undefined &&
+    message.subtype !== "file_share"
+  )
+    return undefined;
 
-  return NormalizedSlackMentionEventSchema.parse({
-    type: "mention",
+  return NormalizedSlackEventSchema.parse({
+    type: message.type === "app_mention" ? "mention" : "direct_message",
     id: envelope.event_id,
     teamId: envelope.team_id,
     appId: envelope.api_app_id,
-    channelId: mention.data.channel,
-    messageTs: mention.data.ts,
-    threadTs: mention.data.thread_ts ?? null,
-    eventTs: mention.data.event_ts,
+    channelId: message.channel,
+    messageTs: message.ts,
+    threadTs: message.thread_ts ?? null,
+    eventTs: message.event_ts,
     eventTime: envelope.event_time,
-    content: mention.data.text,
-    author: { id: mention.data.user },
-    createdAt: new Date(Number(mention.data.ts) * 1_000).toISOString(),
-    attachments: (mention.data.files ?? []).map((file) => ({
+    content: message.text,
+    author: { id: message.user },
+    createdAt: new Date(Number(message.ts) * 1_000).toISOString(),
+    attachments: (message.files ?? []).map((file) => ({
       id: file.id,
       filename: file.name ?? file.title ?? file.id,
       contentType: file.mimetype ?? null,
