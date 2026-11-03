@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0-pickitoo.5 - 2026-11-03
+
+### Added
+
+- Direct messages to the Slack app start runs through a new `slack.direct_message` trigger event. It needs no bot mention, and replies in one DM thread continue one conversation. Messages from bots, edits and deletions are ignored, so the app's own DMs never start a run. The Slack manifests and the OAuth grant now request `im:history`, subscribe to `message.im` and enable the App Home Messages tab. `im:history` is not required: an install without it stays connected but receives no DMs until it is reinstalled with the scope.
+
 ## 0.10.0-pickitoo.4 - 2026-10-28
 
 ### Fixed
