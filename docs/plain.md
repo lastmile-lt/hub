@@ -16,7 +16,7 @@ Point a Plain webhook target at `https://<hub-host>/api/integrations/plain/event
 - `discussion.turn_stop_requested`
 - `thread.note_mention_created`
 
-`PLAIN_HUB_SIGNING_SECRET` is the workspace request-signing HMAC secret. The connector authenticates the raw body, checks the workspace and selected agent, ignores agent echoes, and commits events before returning HTTP 200. A background inbox retries a failed dispatch with backoff from 5 seconds to 5 minutes, including after a restart, and drops it with an error log after 10 attempts (about 20 minutes). An event waiting for its retry does not hold back newer events. Duplicate message deliveries do not create another inbox entry. Hub's workflow intake provides run-level deduplication.
+`PLAIN_HUB_SIGNING_SECRET` is the workspace request-signing HMAC secret. The connector authenticates the raw body, checks the workspace and selected agent, ignores agent echoes, and commits events before returning HTTP 200. A background inbox retries a failed dispatch with backoff from 5 seconds to 5 minutes, including after a restart, and drops it with an error log after 10 attempts (about 20 minutes). An event waiting for its retry does not hold back newer events. Duplicate message deliveries do not create another inbox entry. A note starts at most one investigation: later edits of a note that mentions the agent are ignored, but a mention first added by an edit still starts one. Hub's workflow intake provides run-level deduplication.
 
 ## Author a private workflow
 

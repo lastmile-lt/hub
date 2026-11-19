@@ -137,14 +137,9 @@ export function normalizePlainEvent(
     return {
       ...common,
       source: "plain.note",
-      deliveryId: JSON.stringify([
-        "plain",
-        workspaceId,
-        agentId,
-        "note",
-        p.note.id,
-        p.note.updatedAt,
-      ]),
+      // One investigation per note: later edits of a note that mentions the agent are
+      // duplicates. A mention first added by an edit still starts one.
+      deliveryId: JSON.stringify(["plain", workspaceId, agentId, "note", p.note.id]),
       conversationKey: key(workspaceId, agentId, "thread", p.thread.id),
       timestamp: p.note.updatedAt,
       actorId: actorId(p.note.updatedBy),

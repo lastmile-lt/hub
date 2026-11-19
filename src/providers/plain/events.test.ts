@@ -28,7 +28,7 @@ describe("Plain event routing", () => {
   });
 });
 
-it("accepts a note mention added by an edit, strips mention tokens, and ignores self-authored notes", () => {
+it("accepts a note mention added by an edit, deduplicates later edits, strips mention tokens, and ignores self-authored notes", () => {
   const event = {
     id: "ev_note",
     type: "thread.note_mention_created",
@@ -64,7 +64,7 @@ it("accepts a note mention added by an edit, strips mention tokens, and ignores 
     "ws_example",
     "mu_example",
   )!;
-  assert.notEqual(edited.deliveryId, parsed.deliveryId);
+  assert.equal(edited.deliveryId, parsed.deliveryId);
   assert.equal(edited.conversationKey, parsed.conversationKey);
   assert.equal(
     normalizePlainEvent(
