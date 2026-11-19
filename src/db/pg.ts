@@ -178,6 +178,22 @@ class PgDatabase implements Database {
     return this.triggerAcceptance.acceptLinear(input);
   }
 
+  persistPlainEvent(input: PersistManualEventInput) {
+    return this.triggerAcceptance.persistPlain(input);
+  }
+  pendingPlainEvents(binding: import("./types.js").PlainEventBinding, now: Date) {
+    return this.triggerAcceptance.pendingPlainEvents(binding, now);
+  }
+  markPlainEventProcessed(receiptId: string) {
+    return this.triggerAcceptance.markPlainEventProcessed(receiptId);
+  }
+  deferPlainEvent(receiptId: string, retry: { attempts: number; retryAt: Date }) {
+    return this.triggerAcceptance.deferPlainEvent(receiptId, retry);
+  }
+  isPlainTurnStopped(turn: import("./types.js").PlainTurnLocator) {
+    return this.triggerAcceptance.isPlainTurnStopped(turn);
+  }
+
   persistManualEvent(input: PersistManualEventInput) {
     return this.triggerAcceptance.persistManual(input);
   }

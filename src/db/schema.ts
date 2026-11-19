@@ -49,7 +49,7 @@ export const providerEventReceipts = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     provider: text()
-      .$type<(typeof CONNECTION_PROVIDERS)[number] | "manual" | "schedule">()
+      .$type<(typeof CONNECTION_PROVIDERS)[number] | "manual" | "schedule" | "plain">()
       .notNull(),
     connectionId: uuid("connection_id"),
     resourceId: text("resource_id"),
@@ -63,6 +63,9 @@ export const providerEventReceipts = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
     droppedReason: text("dropped_reason"),
     acceptedRoutes: jsonb("accepted_routes"),
+    plainProcessedAt: timestamp("plain_processed_at", { withTimezone: true }),
+    plainAttempts: integer("plain_attempts").default(0).notNull(),
+    plainRetryAt: timestamp("plain_retry_at", { withTimezone: true }),
     linearStopConfirmationStatus: text("linear_stop_confirmation_status").$type<
       "pending" | "confirmed"
     >(),
@@ -95,7 +98,7 @@ export const providerEventReceipts = pgTable(
     ),
     check(
       "provider_event_receipts_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'manual', 'schedule')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'manual', 'schedule', 'plain')`,
     ),
     check(
       "provider_event_receipts_linear_stop_confirmation_check",

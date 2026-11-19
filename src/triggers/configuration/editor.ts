@@ -128,7 +128,9 @@ export function patchTriggerYaml(yaml: string, value: TriggerFormValue): string 
     deleteIfPresent(document, ["on", value.event, "connection"]);
     deleteIfPresent(document, ["on", value.event, "filters", "from_users"]);
   } else {
-    setIfChanged(document, ["on", value.event, "connection"], value.connection);
+    if (eventDefinition(value.event).connectionRequired)
+      setIfChanged(document, ["on", value.event, "connection"], value.connection);
+    else deleteIfPresent(document, ["on", value.event, "connection"]);
     setIfChanged(document, ["on", value.event, "filters", "from_users"], users(value.allowedUsers));
   }
 
@@ -239,7 +241,7 @@ function formEventDefinition(value: TriggerFormValue): TriggerDocument["on"][str
     return { recurrence: value.recurrence ?? DEFAULT_RECURRENCE };
   if (eventDefinition(value.event).origin === "hub") return {};
   return {
-    connection: value.connection,
+    ...(eventDefinition(value.event).connectionRequired ? { connection: value.connection } : {}),
     filters: { from_users: users(value.allowedUsers), ...authoredQualifiers(value) },
   };
 }
@@ -306,7 +308,8 @@ export function triggerFormErrors(value: TriggerFormValue): TriggerFieldErrors {
     errors.name = "Use lowercase letters, digits, and hyphens, starting with a letter.";
   }
   if (eventDefinition(value.event).origin === "provider") {
-    if (value.connection.trim().length === 0) errors.connection = "Connection is required.";
+    if (eventDefinition(value.event).connectionRequired && value.connection.trim().length === 0)
+      errors.connection = "Connection is required.";
     if (value.allowedUsers.trim().length === 0) {
       errors.allowedUsers = "Name at least one user ID, or let everyone trigger it.";
     }

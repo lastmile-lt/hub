@@ -1366,7 +1366,75 @@ class MemoryDatabase implements Database {
     );
   }
 
-  async persistManualEvent(input: PersistManualEventInput) {
+  private readonly processedPlainReceipts = new Set<string>();
+  private readonly plainRetries = new Map<string, { attempts: number; retryAt: Date }>();
+
+  persistManualEvent(input: PersistManualEventInput) {
+    return this.persistBoundEvent("manual", input);
+  }
+  persistPlainEvent(input: PersistManualEventInput) {
+    return this.persistBoundEvent("plain", input);
+  }
+  async pendingPlainEvents(
+    binding: import("./types.js").PlainEventBinding,
+    now: Date,
+  ): Promise<import("./types.js").PendingPlainEvent[]> {
+    return [...this.providerEventReceipts.values()]
+      .filter((receipt) => {
+        const payload = isRecord(receipt.payload) ? receipt.payload : {};
+        return (
+          receipt.provider === "plain" &&
+          receipt.organizationId === binding.organizationId &&
+          !this.processedPlainReceipts.has(receipt.id) &&
+          (this.plainRetries.get(receipt.id)?.retryAt.getTime() ?? 0) <= now.getTime() &&
+          payload["workspaceId"] === binding.workspaceId &&
+          payload["agentId"] === binding.agentId
+        );
+      })
+      .sort(
+        (a, b) =>
+          Number(b.source === "plain.stop") - Number(a.source === "plain.stop") ||
+          a.receivedAt.getTime() - b.receivedAt.getTime(),
+      )
+      .flatMap((receipt) =>
+        (receipt.acceptedRoutes ?? [])
+          .filter((route) => route.projectId === binding.projectId)
+          .map((route) => ({
+            providerEventReceiptId: receipt.id,
+            organizationId: receipt.organizationId,
+            projectId: route.projectId,
+            configurationRevisionId: route.configurationRevisionId,
+            deliveryId: receipt.deliveryId,
+            source: receipt.source,
+            payload: receipt.payload,
+            receivedAt: receipt.receivedAt,
+            connectionId: route.connectionId,
+            resourceId: route.resourceId,
+            plainAttempts: this.plainRetries.get(receipt.id)?.attempts ?? 0,
+          })),
+      )
+      .slice(0, 50);
+  }
+  async markPlainEventProcessed(receiptId: string) {
+    this.processedPlainReceipts.add(receiptId);
+  }
+  async deferPlainEvent(receiptId: string, retry: { attempts: number; retryAt: Date }) {
+    this.plainRetries.set(receiptId, retry);
+  }
+  async isPlainTurnStopped(turn: import("./types.js").PlainTurnLocator) {
+    return [...this.providerEventReceipts.values()].some(
+      (receipt) =>
+        receipt.provider === "plain" &&
+        receipt.source === "plain.stop" &&
+        receipt.organizationId === turn.organizationId &&
+        receipt.resourceId === turn.conversationKey &&
+        receipt.acceptedRoutes?.some((route) => route.projectId === turn.projectId) &&
+        isRecord(receipt.payload) &&
+        typeof receipt.payload["timestamp"] === "string" &&
+        Date.parse(receipt.payload["timestamp"]) >= Date.parse(turn.timestamp),
+    );
+  }
+  private async persistBoundEvent(provider: "manual" | "plain", input: PersistManualEventInput) {
     const existing = this.findReceiptId(
       input.organizationId,
       input.deliveryId,
@@ -1397,13 +1465,14 @@ class MemoryDatabase implements Database {
     const project = this.projects.get(input.projectId);
     if (
       project?.organizationId !== input.organizationId ||
+      project.status !== "active" ||
       project.activeConfigurationRevisionId === null
     ) {
       throw new Error("manual project configuration unavailable");
     }
     const receipt = this.insertProviderEventReceipt({
       organizationId: input.organizationId,
-      provider: "manual",
+      provider,
       connectionId: input.connectionId ?? null,
       resourceId: input.resourceId ?? null,
       input,

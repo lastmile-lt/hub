@@ -70,6 +70,17 @@ describe("trigger dashboard read model", () => {
       status: "running",
       receivedAt: receivedAt.toISOString(),
     });
+    await new OrganizationTriggerStore(database, "org-1", acceptingAgentValidator()).save({
+      yaml: triggerYaml
+        .replace("manual-task", "plain-task")
+        .replace("manual.run: {}", 'plain.discussion:\n    filters: { from_users: ["*"] }'),
+      userId: "user-1",
+    });
+    const withPlain = await dashboard.snapshot(request, "acme");
+    assert.equal(
+      withPlain.triggers.find(({ event }) => event === "plain.discussion")?.provider,
+      "plain",
+    );
   });
 });
 
