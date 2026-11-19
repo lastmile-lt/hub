@@ -299,3 +299,39 @@ it("does not update status after reassignment, but still stops the local executi
   assert.equal(cancelled, true);
   assert.deepEqual(f.calls, []);
 });
+
+it.each(["failed", "no_response"])(
+  "retries %s status failures without duplicating the internal notice",
+  async (outcome) => {
+    const f = await fixture();
+    let statusAttempts = 0;
+    f.client.setStatus = async () => {
+      statusAttempts++;
+      if (statusAttempts === 1) throw new Error("plain_http_503");
+      f.calls.push(["status", "IDLE"]);
+    };
+    const provider = createPlainProvider({
+      ...f,
+      configurationStoreForProject: () => f.store,
+      connectionsForProject: () => {
+        throw new Error("unused");
+      },
+    });
+    const matches = await provider.match(f.external);
+    assert.ok(typeof matches !== "string");
+    const match = matches[0];
+    assert.ok(isAcceptedTriggerProviderMatch(match));
+    const notify = () =>
+      outcome === "failed"
+        ? provider.onAgentExecutionFailed!(match.triggerContext, match.outputContext, "failed")
+        : provider.onAgentExecutionCompleted!(match.triggerContext, match.outputContext, {
+            status: "succeeded",
+            outputEmissions: {},
+          });
+    await assert.rejects(notify(), /plain_http_503/u);
+    assert.equal(f.calls.length, 0);
+    await notify();
+    assert.equal(statusAttempts, 2);
+    assert.equal(f.calls.filter(([kind]) => kind === "discussion").length, 1);
+  },
+);

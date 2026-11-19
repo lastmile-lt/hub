@@ -46,12 +46,13 @@ export function createPlainProvider(
   };
   const failure = async (event: PlainEvent, reason: string) => {
     if (reason === "stopped_by_user" || (await stopped(event))) return;
+    // Finish retryable status work before posting a non-idempotent notice.
+    await status(event, "IDLE");
     await deliver(
       options,
       event,
       "I couldn’t complete this investigation. Please ask a human support agent to review it.",
     );
-    await status(event, "IDLE");
   };
   return {
     name: "plain",
@@ -169,6 +170,7 @@ export function createPlainProvider(
         await failure(event, "failed");
         return;
       }
+      await status(event, "IDLE");
       if (
         result.outputEmissions !== undefined &&
         (result.outputEmissions["plain.reply"] ?? 0) === 0
@@ -179,7 +181,6 @@ export function createPlainProvider(
           "The investigation ended without an internal response. Please ask a human support agent to review it.",
         );
       }
-      await status(event, "IDLE");
     },
     async onAgentExecutionFailed(context, _output, reason) {
       await failure(context.event.plain, reason);

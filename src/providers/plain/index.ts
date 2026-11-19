@@ -1,3 +1,5 @@
+import { logger } from "../../logger.js";
+import type { TriggerHandler } from "../../triggers/index.js";
 import type { Database } from "../../db/types.js";
 import type { ProviderRegistration } from "../registration.js";
 import { outputContextProvider } from "../../execution-capabilities/outputs.js";
@@ -32,17 +34,82 @@ export async function createPlainRegistration(options: {
     binding,
     signingSecret: configuration.signingSecret,
   });
-  return {
-    connection: { name: "plain", status: () => ({ status: "configured" }), actions: {} },
-    sources: [
-      {
-        async start(handler) {
+  let running = false;
+  let verified = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let checking: Promise<void> | undefined;
+  const requireVerified = () => {
+    if (!verified) throw new Error("plain_unavailable");
+  };
+  // Recovery can invoke provider hooks and outputs before the source starts. Gate every
+  // API operation as well as webhook intake until the configured identity is verified.
+  const verifiedClient: PlainClient = {
+    identity: () => client.identity(),
+    discussion: (id) => {
+      requireVerified();
+      return client.discussion(id);
+    },
+    thread: (id) => {
+      requireVerified();
+      return client.thread(id);
+    },
+    sendDiscussionMessage: (id, content) => {
+      requireVerified();
+      return client.sendDiscussionMessage(id, content);
+    },
+    createNote: (threadId, customerId, content) => {
+      requireVerified();
+      return client.createNote(threadId, customerId, content);
+    },
+    setStatus: (id, status) => {
+      requireVerified();
+      return client.setStatus(id, status);
+    },
+  };
+  const scheduleVerification = (handler: TriggerHandler, delay: number) => {
+    timer = setTimeout(() => {
+      checking = (async () => {
+        try {
           const identity = await client.identity();
           if (identity.workspaceId !== binding.workspaceId || identity.agentId !== binding.agentId)
             throw new Error("plain_api_identity_mismatch");
+          if (!running) return;
           await source.start(handler);
+          verified = running;
+        } catch {
+          // Do not log upstream error bodies, which may contain sensitive data.
+          logger.warn(
+            { provider: "plain", operation: "plain.identity.verify" },
+            "Plain is unavailable; identity verification will retry",
+          );
+          if (running) scheduleVerification(handler, 30_000);
+        }
+      })().finally(() => {
+        checking = undefined;
+      });
+    }, delay);
+    timer.unref();
+  };
+  return {
+    connection: {
+      name: "plain",
+      status: () => ({ status: verified ? "configured" : "unavailable" }),
+      actions: {},
+    },
+    sources: [
+      {
+        async start(handler) {
+          if (running) return;
+          running = true;
+          scheduleVerification(handler, 0);
         },
-        stop: () => source.stop(),
+        async stop() {
+          running = false;
+          verified = false;
+          clearTimeout(timer);
+          await checking;
+          await source.stop();
+        },
       },
     ],
     triggerProviders: [
@@ -50,7 +117,7 @@ export async function createPlainRegistration(options: {
         createPlainProvider({
           ...resources,
           database,
-          client,
+          client: verifiedClient,
           binding,
           isEnabled: async () => (await resolveTrigger())?.enabled === true,
           ...(configuration.mapping === undefined ? {} : { mapping: configuration.mapping }),
@@ -61,9 +128,17 @@ export async function createPlainRegistration(options: {
         type: "plain.reply",
         tool: plainReplyTool,
         available: outputContextProvider("plain"),
-        execute: createPlainReplyExecutor({ database, client, binding }),
+        execute: createPlainReplyExecutor({ database, client: verifiedClient, binding }),
       },
     ],
-    requests: [{ name: "plain.events", handle: (request) => source.handle(request) }],
+    requests: [
+      {
+        name: "plain.events",
+        handle: async (request) =>
+          verified
+            ? source.handle(request)
+            : Response.json({ error: "plain_unavailable" }, { status: 503 }),
+      },
+    ],
   };
 }
