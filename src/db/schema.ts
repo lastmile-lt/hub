@@ -64,6 +64,8 @@ export const providerEventReceipts = pgTable(
     droppedReason: text("dropped_reason"),
     acceptedRoutes: jsonb("accepted_routes"),
     plainProcessedAt: timestamp("plain_processed_at", { withTimezone: true }),
+    plainAttempts: integer("plain_attempts").default(0).notNull(),
+    plainRetryAt: timestamp("plain_retry_at", { withTimezone: true }),
     linearStopConfirmationStatus: text("linear_stop_confirmation_status").$type<
       "pending" | "confirmed"
     >(),

@@ -6,7 +6,8 @@ import { afterEach, it, vi } from "vitest";
 import { acceptingAgentValidator } from "../../test-utils/agent-validator.js";
 import { enrollTestDaemon, TEST_DAEMON_SLUG } from "../../test-utils/project-configuration.js";
 import { OrganizationTriggerStore } from "../../triggers/store.js";
-import { createPlainRegistration } from "./index.js";
+import { logger } from "../../logger.js";
+import { createPlainRegistration, loadPlainRegistration } from "./index.js";
 import { discussionEvent, fixture } from "./test-utils.js";
 
 async function registrationFixture() {
@@ -108,14 +109,17 @@ it.each(["unavailable", "wrong_identity"])(
       );
       assert.equal(
         (
-          await f.database.pendingPlainEvents({
-            ...f.binding,
-            projectId: f.trigger.runtimeProjectId,
-          })
+          await f.database.pendingPlainEvents(
+            {
+              ...f.binding,
+              projectId: f.trigger.runtimeProjectId,
+            },
+            new Date(),
+          )
         ).length,
         1,
       );
-      assert.equal((await f.database.pendingPlainEvents(f.binding)).length, 0);
+      assert.equal((await f.database.pendingPlainEvents(f.binding, new Date())).length, 0);
     } finally {
       await source.stop();
     }
@@ -204,5 +208,32 @@ it("keeps the shared Hub runtime and another provider available during a Plain o
     );
   } finally {
     await runtime.stop();
+  }
+});
+
+it("disables only Plain when its configuration or trigger cannot be loaded", async () => {
+  const f = await registrationFixture();
+  const errors = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+  const env = {
+    PLAIN_HUB_API_KEY: f.configuration.apiKey,
+    PLAIN_HUB_SIGNING_SECRET: f.configuration.signingSecret,
+    PLAIN_HUB_WORKSPACE_ID: f.configuration.workspaceId,
+    PLAIN_HUB_AGENT_ID: f.configuration.agentId,
+    PLAIN_HUB_ORGANIZATION_ID: f.configuration.organizationId,
+    PLAIN_HUB_TRIGGER_ID: f.configuration.triggerId,
+  };
+  try {
+    assert.equal(await loadPlainRegistration({ database: f.database, env: {} }), undefined);
+    assert.equal(errors.mock.calls.length, 0);
+    assert.notEqual(await loadPlainRegistration({ database: f.database, env }), undefined);
+    for (const broken of [
+      { ...env, PLAIN_HUB_TRIGGER_ID: "deleted-trigger" },
+      { ...env, PLAIN_HUB_API_KEY: "" },
+      { ...env, PLAIN_HUB_ACCOUNT_MAPPING_PATH: "/nonexistent/plain-mapping.yml" },
+    ])
+      assert.equal(await loadPlainRegistration({ database: f.database, env: broken }), undefined);
+    assert.equal(errors.mock.calls.length, 3);
+  } finally {
+    errors.mockRestore();
   }
 });

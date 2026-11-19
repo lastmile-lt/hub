@@ -1367,6 +1367,7 @@ class MemoryDatabase implements Database {
   }
 
   private readonly processedPlainReceipts = new Set<string>();
+  private readonly plainRetries = new Map<string, { attempts: number; retryAt: Date }>();
 
   persistManualEvent(input: PersistManualEventInput) {
     return this.persistBoundEvent("manual", input);
@@ -1374,7 +1375,10 @@ class MemoryDatabase implements Database {
   persistPlainEvent(input: PersistManualEventInput) {
     return this.persistBoundEvent("plain", input);
   }
-  async pendingPlainEvents(binding: import("./types.js").PlainEventBinding) {
+  async pendingPlainEvents(
+    binding: import("./types.js").PlainEventBinding,
+    now: Date,
+  ): Promise<import("./types.js").PendingPlainEvent[]> {
     return [...this.providerEventReceipts.values()]
       .filter((receipt) => {
         const payload = isRecord(receipt.payload) ? receipt.payload : {};
@@ -1382,6 +1386,7 @@ class MemoryDatabase implements Database {
           receipt.provider === "plain" &&
           receipt.organizationId === binding.organizationId &&
           !this.processedPlainReceipts.has(receipt.id) &&
+          (this.plainRetries.get(receipt.id)?.retryAt.getTime() ?? 0) <= now.getTime() &&
           payload["workspaceId"] === binding.workspaceId &&
           payload["agentId"] === binding.agentId
         );
@@ -1405,12 +1410,16 @@ class MemoryDatabase implements Database {
             receivedAt: receipt.receivedAt,
             connectionId: route.connectionId,
             resourceId: route.resourceId,
+            plainAttempts: this.plainRetries.get(receipt.id)?.attempts ?? 0,
           })),
       )
       .slice(0, 50);
   }
   async markPlainEventProcessed(receiptId: string) {
     this.processedPlainReceipts.add(receiptId);
+  }
+  async deferPlainEvent(receiptId: string, retry: { attempts: number; retryAt: Date }) {
+    this.plainRetries.set(receiptId, retry);
   }
   async isPlainTurnStopped(turn: import("./types.js").PlainTurnLocator) {
     return [...this.providerEventReceipts.values()].some(

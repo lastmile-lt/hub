@@ -1,5 +1,5 @@
 {
-  "id": "9ccfce27-a080-45b1-8fc8-1045bcd33e8b",
+  "id": "e50e691d-edee-411b-8f16-387191274308",
   "prevId": "50b36f63-f349-4883-929a-25ab206a4cce",
   "version": "7",
   "dialect": "postgresql",
@@ -4998,6 +4998,19 @@
         },
         "plain_processed_at": {
           "name": "plain_processed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "plain_attempts": {
+          "name": "plain_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "plain_retry_at": {
+          "name": "plain_retry_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

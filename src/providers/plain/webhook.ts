@@ -1,9 +1,15 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { Database, PlainEventBinding } from "../../db/types.js";
+import type { Database, PendingPlainEvent, PlainEventBinding } from "../../db/types.js";
 import { readBoundedRequestBody } from "../../http/request-body.js";
 import { logger } from "../../logger.js";
 import type { TriggerHandler, TriggerSource } from "../../triggers/index.js";
 import { normalizePlainEvent } from "./events.js";
+
+/** Failed dispatches back off from 5 s to 5 min and are dropped after about 20 minutes. */
+export const PLAIN_MAX_DISPATCH_ATTEMPTS = 10;
+export function plainRetryDelay(attempts: number): number {
+  return Math.min(5_000 * 2 ** (attempts - 1), 300_000);
+}
 
 export function createPlainWebhookSource(options: {
   database: Database;
@@ -14,20 +20,40 @@ export function createPlainWebhookSource(options: {
   let handler: TriggerHandler | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let draining: Promise<void> | undefined;
+  const retryLater = async (event: PendingPlainEvent, now: number): Promise<void> => {
+    const attempts = event.plainAttempts + 1;
+    const log = {
+      provider: "plain",
+      operation: "plain.inbox.event",
+      providerEventReceiptId: event.providerEventReceiptId,
+      attempts,
+    };
+    if (attempts >= PLAIN_MAX_DISPATCH_ATTEMPTS) {
+      // Give up so that a permanently failing event cannot be retried forever or crowd
+      // newer events out of the inbox.
+      await options.database.markPlainEventProcessed(event.providerEventReceiptId);
+      logger.error(log, "Plain event dropped after repeated dispatch failures");
+      return;
+    }
+    await options.database.deferPlainEvent(event.providerEventReceiptId, {
+      attempts,
+      retryAt: new Date(now + plainRetryDelay(attempts)),
+    });
+    logger.warn(log, "Plain event retained for retry");
+  };
   const drain = (): Promise<void> => {
     if (handler === undefined) return Promise.resolve();
     draining ??= (async () => {
-      const events = await options.database.pendingPlainEvents(options.binding);
+      const now = options.now?.() ?? Date.now();
+      const events = await options.database.pendingPlainEvents(options.binding, new Date(now));
       for (const event of events) {
         if (handler === undefined) break;
         try {
           await handler(event);
           await options.database.markPlainEventProcessed(event.providerEventReceiptId);
         } catch {
-          logger.warn(
-            { provider: "plain", operation: "plain.inbox.event" },
-            "Plain event retained for retry",
-          );
+          // Do not log the error, which may contain upstream customer data.
+          await retryLater(event, now);
         }
       }
     })().finally(() => {

@@ -56,13 +56,15 @@ describe("Plain inbox persistence", () => {
           receivedAt: new Date(),
         };
         await Promise.all(Array.from({ length: 5 }, () => database.persistPlainEvent(input)));
-        assert.equal((await database.pendingPlainEvents(binding)).length, 1);
+        assert.equal((await database.pendingPlainEvents(binding, new Date())).length, 1);
         assert.equal(
-          (await database.pendingPlainEvents({ ...binding, workspaceId: "other" })).length,
+          (await database.pendingPlainEvents({ ...binding, workspaceId: "other" }, new Date()))
+            .length,
           0,
         );
         assert.equal(
-          (await database.pendingPlainEvents({ ...binding, organizationId: "other" })).length,
+          (await database.pendingPlainEvents({ ...binding, organizationId: "other" }, new Date()))
+            .length,
           0,
         );
         await database.persistPlainEvent({
@@ -74,9 +76,20 @@ describe("Plain inbox persistence", () => {
         await bundle.runtime.close();
         bundle = await open();
         database = createDatabase(bundle.runtime, bundle.locks);
-        const recovered = await database.pendingPlainEvents(binding);
+        const recovered = await database.pendingPlainEvents(binding, new Date());
         assert.equal(recovered.length, 2);
         assert.equal(recovered[0]?.source, "plain.stop");
+        const message = recovered[1]!;
+        assert.equal(message.plainAttempts, 0);
+        const retryAt = new Date(Date.now() + 60_000);
+        await database.deferPlainEvent(message.providerEventReceiptId, { attempts: 1, retryAt });
+        assert.deepEqual(
+          (await database.pendingPlainEvents(binding, new Date())).map((item) => item.source),
+          ["plain.stop"],
+        );
+        const due = await database.pendingPlainEvents(binding, retryAt);
+        assert.equal(due.length, 2);
+        assert.equal(due[1]?.plainAttempts, 1);
         const turn = {
           ...binding,
           conversationKey: event.conversationKey,
@@ -97,7 +110,7 @@ describe("Plain inbox persistence", () => {
         for (const item of recovered)
           await database.markPlainEventProcessed(item.providerEventReceiptId);
         await database.persistPlainEvent(input);
-        assert.equal((await database.pendingPlainEvents(binding)).length, 0);
+        assert.equal((await database.pendingPlainEvents(binding, retryAt)).length, 0);
         assert.equal(await database.isPlainTurnStopped(turn), true);
       } finally {
         await bundle.runtime.close();

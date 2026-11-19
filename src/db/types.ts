@@ -674,6 +674,10 @@ export interface PlainEventBinding {
   workspaceId: string;
   agentId: string;
 }
+/** A Plain inbox event with the number of failed dispatch attempts so far. */
+export interface PendingPlainEvent extends DurableProviderEvent {
+  plainAttempts: number;
+}
 export interface PlainTurnLocator extends PlainEventBinding {
   conversationKey: string;
   timestamp: string;
@@ -1359,8 +1363,10 @@ export interface Database {
   acceptLinearEvent(input: AcceptLinearEventInput): Promise<ProviderEventAcceptance>;
   persistManualEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
   persistPlainEvent(input: PersistManualEventInput): Promise<ManualEventPersistence>;
-  pendingPlainEvents(binding: PlainEventBinding): Promise<DurableProviderEvent[]>;
+  /** Unprocessed events whose retry time, if any, is at or before `now`. */
+  pendingPlainEvents(binding: PlainEventBinding, now: Date): Promise<PendingPlainEvent[]>;
   markPlainEventProcessed(receiptId: string): Promise<void>;
+  deferPlainEvent(receiptId: string, retry: { attempts: number; retryAt: Date }): Promise<void>;
   isPlainTurnStopped(turn: PlainTurnLocator): Promise<boolean>;
   claimGitHubLifecycleReceipt(
     input: GitHubLifecycleReceiptClaimInput,

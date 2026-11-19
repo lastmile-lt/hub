@@ -20,6 +20,7 @@ import type {
   ProviderEventAcceptance,
   ProviderEventEvidence,
   ProviderEventRouteSnapshot,
+  PendingPlainEvent,
   PlainEventBinding,
   PlainTurnLocator,
 } from "./types.js";
@@ -203,7 +204,7 @@ export class ProviderEventAcceptanceRepository {
     return this.persistBoundEvent("plain", input);
   }
 
-  async pendingPlainEvents(binding: PlainEventBinding) {
+  async pendingPlainEvents(binding: PlainEventBinding, now: Date): Promise<PendingPlainEvent[]> {
     const receipts = await this.database
       .select()
       .from(schema.providerEventReceipts)
@@ -212,6 +213,10 @@ export class ProviderEventAcceptanceRepository {
           eq(schema.providerEventReceipts.provider, "plain"),
           eq(schema.providerEventReceipts.organizationId, binding.organizationId),
           isNull(schema.providerEventReceipts.plainProcessedAt),
+          or(
+            isNull(schema.providerEventReceipts.plainRetryAt),
+            lte(schema.providerEventReceipts.plainRetryAt, now),
+          ),
           sql`${schema.providerEventReceipts.payload} ->> 'workspaceId' = ${binding.workspaceId}`,
           sql`${schema.providerEventReceipts.payload} ->> 'agentId' = ${binding.agentId}`,
           sql`${schema.providerEventReceipts.acceptedRoutes} @> ${JSON.stringify([{ projectId: binding.projectId }])}::jsonb`,
@@ -225,8 +230,25 @@ export class ProviderEventAcceptanceRepository {
     return receipts.flatMap((receipt) =>
       (parseAcceptedRoutes(receipt.acceptedRoutes) ?? [])
         .filter((route) => route.projectId === binding.projectId)
-        .map((route) => eventFromReceipt(receipt, route)),
+        .map((route) =>
+          Object.assign(eventFromReceipt(receipt, route), { plainAttempts: receipt.plainAttempts }),
+        ),
     );
+  }
+
+  async deferPlainEvent(
+    receiptId: string,
+    retry: { attempts: number; retryAt: Date },
+  ): Promise<void> {
+    await this.database
+      .update(schema.providerEventReceipts)
+      .set({ plainAttempts: retry.attempts, plainRetryAt: retry.retryAt })
+      .where(
+        and(
+          eq(schema.providerEventReceipts.id, receiptId),
+          eq(schema.providerEventReceipts.provider, "plain"),
+        ),
+      );
   }
 
   async markPlainEventProcessed(receiptId: string): Promise<void> {

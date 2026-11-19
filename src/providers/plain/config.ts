@@ -60,7 +60,19 @@ export async function readPlainConfiguration(
     const content = await readFile(env["PLAIN_HUB_ACCOUNT_MAPPING_PATH"], "utf8");
     if (Buffer.byteLength(content) > 1_048_576)
       throw new Error("Plain account mapping exceeds 1 MiB");
-    mapping = mappingSchema.parse(load(content));
+    let parsed: unknown;
+    try {
+      parsed = load(content);
+    } catch {
+      // YAML parser messages quote the file, which holds private account data.
+      throw new Error("Plain account mapping is not valid YAML");
+    }
+    const result = mappingSchema.safeParse(parsed);
+    if (!result.success)
+      throw new Error(
+        `Plain account mapping is invalid: ${result.error.issues.map((issue) => issue.message).join("; ")}`,
+      );
+    mapping = result.data;
   }
   return {
     apiKey: env["PLAIN_HUB_API_KEY"]!,

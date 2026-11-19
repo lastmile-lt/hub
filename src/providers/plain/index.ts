@@ -4,9 +4,34 @@ import type { Database } from "../../db/types.js";
 import type { ProviderRegistration } from "../registration.js";
 import { outputContextProvider } from "../../execution-capabilities/outputs.js";
 import { createPlainClient, type PlainClient } from "./client.js";
-import type { PlainConfiguration } from "./config.js";
+import { readPlainConfiguration, type PlainConfiguration } from "./config.js";
 import { createPlainProvider, createPlainReplyExecutor, plainReplyTool } from "./provider.js";
 import { createPlainWebhookSource } from "./webhook.js";
+
+/**
+ * Plain must not stop the rest of Hub from starting. A configuration error or a missing
+ * trigger disables only Plain until the configuration is fixed and Hub restarts.
+ */
+export async function loadPlainRegistration(options: {
+  database: Database;
+  env: NodeJS.ProcessEnv;
+}): Promise<ProviderRegistration | undefined> {
+  try {
+    const configuration = await readPlainConfiguration(options.env);
+    if (configuration === undefined) return undefined;
+    return await createPlainRegistration({ database: options.database, configuration });
+  } catch (error) {
+    logger.error(
+      {
+        provider: "plain",
+        operation: "plain.startup",
+        reason: error instanceof Error ? error.message : "unknown",
+      },
+      "Plain is disabled because its configuration could not be loaded",
+    );
+    return undefined;
+  }
+}
 
 export async function createPlainRegistration(options: {
   database: Database;
