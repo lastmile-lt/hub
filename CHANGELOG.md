@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0-pickitoo.6 - 2026-11-19
+
+### Added
+
+- Optional Plain connector for internal investigations. Staff mention the Plain agent in a thread note or talk to it in a discussion, and a `plain.discussion` or `plain.note` trigger starts a run. Replies are always internal (a discussion message or a note) and never reach customers; Stop in Plain cancels the run. The connector stays off until all six `PLAIN_HUB_*` settings are set, and a Plain configuration error disables only Plain. See `docs/plain.md`.
+- Database migration `0050_plain_inbox` adds Plain inbox columns to `provider_event_receipts`.
+
 ## 0.10.0-pickitoo.5 - 2026-11-03
 
 ### Added
