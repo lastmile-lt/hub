@@ -188,8 +188,26 @@ export function createPlainProvider(
   };
 }
 function resolveMapping(mapping: PlainAccountMapping | undefined, thread: PlainThread | null) {
-  const accountId = thread?.account?.id ?? thread?.customer.company?.id;
+  if (thread === null) return { status: "unmapped" as const };
+  const account = thread.account;
+  const accountId = account?.id ?? thread.customer.company?.id;
   const match = accountId === undefined ? undefined : mapping?.accounts[accountId];
+  const field = account?.gcpProject;
+  if (field?.status === "invalid" || field?.status === "ambiguous")
+    return { status: "unmapped" as const, accountId, reason: `${field.status}_gcp_project_id` };
+  if (account && field?.status === "valid") {
+    // A configured private mapping remains the boundary for allowed projects.
+    if (mapping !== undefined && !match?.projects.includes(field.projectId))
+      return { status: "unmapped" as const, accountId, reason: "project_mapping_conflict" };
+    return {
+      status: "mapped" as const,
+      source: "plain_account_field" as const,
+      accountId,
+      name: account.name,
+      projects: [field.projectId],
+      defaultProject: field.projectId,
+    };
+  }
   return match === undefined
     ? { status: "unmapped" as const }
     : { status: "mapped" as const, accountId, ...match };

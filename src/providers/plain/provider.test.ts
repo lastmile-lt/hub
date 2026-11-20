@@ -5,6 +5,8 @@ import { describe, it } from "vitest";
 import { isAcceptedTriggerProviderMatch } from "../../triggers/index.js";
 import { createPlainProvider, createPlainReplyExecutor } from "./provider.js";
 import { fixture } from "./test-utils.js";
+import type { PlainAccountMapping } from "./config.js";
+import type { PlainThread } from "./client.js";
 
 describe("Plain internal investigations", () => {
   it("continues the same discussion, isolates other discussions, and accepts workflow actors", async () => {
@@ -335,3 +337,155 @@ it.each(["failed", "no_response"])(
     assert.equal(f.calls.filter(([kind]) => kind === "discussion").length, 1);
   },
 );
+
+it("exposes the linked account project for both note and discussion investigations", async () => {
+  for (const source of ["plain.discussion", "plain.note"] as const) {
+    const f = await fixture();
+    const originalThread = f.client.thread.bind(f.client);
+    f.client.thread = async (id) => ({
+      ...(await originalThread(id)),
+      account: {
+        id: "acc_example",
+        name: "Example",
+        gcpProject: { status: "valid", projectId: "example-project" },
+      },
+    });
+    const originalDiscussion = f.client.discussion.bind(f.client);
+    f.client.discussion = async (id) => ({
+      ...(await originalDiscussion(id)),
+      threadId: "t_example",
+    });
+    const event = {
+      ...f.event,
+      source,
+      threadId: "t_example",
+      discussionId: source === "plain.note" ? null : f.event.discussionId,
+    };
+    const provider = createPlainProvider({
+      ...f,
+      ...(source === "plain.note"
+        ? {
+            mapping: {
+              accounts: {
+                acc_example: {
+                  projects: ["example-project", "other-project"],
+                  defaultProject: "other-project",
+                },
+              },
+            },
+          }
+        : {}),
+      configurationStoreForProject: () => f.store,
+      connectionsForProject: () => {
+        throw new Error("unused");
+      },
+    });
+    const context = await provider.materializeContext!({
+      executionId: "execution",
+      ...f.external,
+      triggerContext: {
+        provider: "plain",
+        event: { plain: event },
+        target: { provider: "plain", ...f.binding, event },
+      },
+    });
+    assert.deepEqual(z.object({ projectMapping: z.unknown() }).parse(context).projectMapping, {
+      status: "mapped",
+      source: "plain_account_field",
+      accountId: "acc_example",
+      name: "Example",
+      projects: ["example-project"],
+      defaultProject: "example-project",
+    });
+  }
+});
+
+it("does not use invalid or ambiguous fields or bypass a private mapping", async () => {
+  const cases: [
+    NonNullable<PlainThread["account"]>["gcpProject"],
+    PlainAccountMapping | undefined,
+    string,
+  ][] = [
+    [{ status: "invalid" }, undefined, "invalid_gcp_project_id"],
+    [{ status: "ambiguous" }, undefined, "ambiguous_gcp_project_id"],
+    [
+      { status: "valid", projectId: "example-project" },
+      { accounts: {} },
+      "project_mapping_conflict",
+    ],
+    [
+      { status: "valid", projectId: "example-project" },
+      {
+        accounts: { acc_example: { projects: ["other-project"], defaultProject: "other-project" } },
+      },
+      "project_mapping_conflict",
+    ],
+  ];
+  for (const [gcpProject, mapping, reason] of cases) {
+    const f = await fixture();
+    const original = f.client.thread.bind(f.client);
+    f.client.thread = async (id) => ({
+      ...(await original(id)),
+      account: { id: "acc_example", name: "Example", gcpProject },
+    });
+    const event = {
+      ...f.event,
+      source: "plain.note" as const,
+      discussionId: null,
+      threadId: "t_example",
+    };
+    const provider = createPlainProvider({
+      ...f,
+      ...(mapping === undefined ? {} : { mapping }),
+      configurationStoreForProject: () => f.store,
+      connectionsForProject: () => {
+        throw new Error("unused");
+      },
+    });
+    const context = await provider.materializeContext!({
+      executionId: "execution",
+      ...f.external,
+      triggerContext: {
+        provider: "plain",
+        event: { plain: event },
+        target: { provider: "plain", ...f.binding, event },
+      },
+    });
+    assert.deepEqual(z.object({ projectMapping: z.unknown() }).parse(context).projectMapping, {
+      status: "unmapped",
+      accountId: "acc_example",
+      reason,
+    });
+  }
+});
+
+it("keeps missing account fields and standalone discussions unmapped without guessing", async () => {
+  const f = await fixture();
+  const provider = createPlainProvider({
+    ...f,
+    configurationStoreForProject: () => f.store,
+    connectionsForProject: () => {
+      throw new Error("unused");
+    },
+  });
+  for (const threadId of [null, "t_example"]) {
+    const event = {
+      ...f.event,
+      source: threadId === null ? ("plain.discussion" as const) : ("plain.note" as const),
+      discussionId: threadId === null ? f.event.discussionId : null,
+      threadId,
+    };
+    const context = await provider.materializeContext!({
+      executionId: "execution",
+      ...f.external,
+      triggerContext: {
+        provider: "plain",
+        event: { plain: event },
+        target: { provider: "plain", ...f.binding, event },
+      },
+    });
+    assert.deepEqual(z.object({ projectMapping: z.unknown() }).parse(context).projectMapping, {
+      status: "unmapped",
+    });
+  }
+});
