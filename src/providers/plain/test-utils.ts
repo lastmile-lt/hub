@@ -76,7 +76,7 @@ export async function fixture() {
       return {
         id,
         title: "Example thread",
-        account: { id: "acc_example", name: "Example" },
+        account: { id: "acc_example", name: "Example", gcpProject: { status: "missing" } },
         customer: { id: "c_example", fullName: "Example customer", company: null },
         timelineEntries: { edges: [], pageInfo: { hasPreviousPage: false } },
       };

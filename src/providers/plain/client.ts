@@ -27,10 +27,23 @@ const discussionSchema = z.object({
     pageInfo,
   }),
 });
+const accountFieldSchema = z.object({
+  externalFieldId: z.string(),
+  value: z.object({ __typename: z.string(), stringValue: z.string().optional() }),
+});
+type AccountProject =
+  | { status: "valid"; projectId: string }
+  | { status: "missing" | "invalid" | "ambiguous" };
+const accountSchema = z
+  .object({ id, name: z.string(), accountFields: z.array(accountFieldSchema) })
+  .transform(({ accountFields, ...account }) => ({
+    ...account,
+    gcpProject: accountProject(accountFields),
+  }));
 const threadSchema = z.object({
   id,
   title: z.string(),
-  account: z.object({ id, name: z.string() }).nullable(),
+  account: accountSchema.nullable(),
   customer: z.object({
     id,
     fullName: z.string(),
@@ -129,7 +142,9 @@ export function createPlainClient(options: {
     },
     async thread(threadId) {
       const data = await query(
-        `query($id: ID!) { thread(threadId: $id) { id title account { id name } customer { id fullName company { id name } }
+        `query($id: ID!) { thread(threadId: $id) { id title account { id name
+          accountFields { externalFieldId value { __typename ... on AccountFieldStringValue { stringValue } } }
+        } customer { id fullName company { id name } }
         timelineEntries(last: 50) { edges { node { id llmText timestamp { iso8601 } } } pageInfo { hasPreviousPage } } } }`,
         { id: threadId },
       );
@@ -153,4 +168,20 @@ export function createPlainClient(options: {
         agentStatus,
       }),
   };
+}
+
+function accountProject(fields: z.infer<typeof accountFieldSchema>[]): AccountProject {
+  const matches = fields.filter((field) => field.externalFieldId === "gcp_project_id");
+  const [field] = matches;
+  if (field === undefined) return { status: "missing" };
+  if (matches.length !== 1) return { status: "ambiguous" };
+  const value = field.value;
+  const projectId = value.stringValue?.trim();
+  if (
+    value.__typename !== "AccountFieldStringValue" ||
+    projectId === undefined ||
+    !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/u.test(projectId)
+  )
+    return { status: "invalid" };
+  return { status: "valid", projectId };
 }
