@@ -70,6 +70,14 @@ export async function createPlainRegistration(options: {
   // API operation as well as webhook intake until the configured identity is verified.
   const verifiedClient: PlainClient = {
     identity: () => client.identity(),
+    draftState: (id) => {
+      requireVerified();
+      return client.draftState(id);
+    },
+    addGeneratedReply: (threadId, entryId, markdown) => {
+      requireVerified();
+      return client.addGeneratedReply(threadId, entryId, markdown);
+    },
     discussion: (id) => {
       requireVerified();
       return client.discussion(id);
@@ -77,6 +85,10 @@ export async function createPlainRegistration(options: {
     thread: (id) => {
       requireVerified();
       return client.thread(id);
+    },
+    customerMembership: (id) => {
+      requireVerified();
+      return client.customerMembership(id);
     },
     sendDiscussionMessage: (id, content) => {
       requireVerified();

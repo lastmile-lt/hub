@@ -15,15 +15,20 @@ describe("Plain internal API client", () => {
           .parse(JSON.parse(init.body));
         operations.push(body.variables);
         assert.equal(/replyToThread|sendEmail|impersonation/u.test(body.query), false);
-        const field = body.query.includes("createNote") ? "createNote" : "sendDiscussionMessage";
+        const field = ["createNote", "sendDiscussionMessage", "addGeneratedReply"].find((name) =>
+          body.query.includes(name),
+        );
+        assert.ok(field);
         return Response.json({ data: { [field]: { error: null } } });
       },
     });
     await client.createNote("t_one", "c_one", "Internal");
     await client.sendDiscussionMessage("d_one", "Internal");
+    await client.addGeneratedReply("t_one", "entry_one", "Draft");
     assert.deepEqual(operations, [
       { input: { threadId: "t_one", customerId: "c_one", text: "Internal", markdown: "Internal" } },
       { input: { discussionId: "d_one", markdownContent: "Internal" } },
+      { input: { threadId: "t_one", timelineEntryId: "entry_one", markdown: "Draft" } },
     ]);
   });
   it("treats GraphQL and mutation errors as failures without leaking their bodies", async () => {
@@ -162,4 +167,62 @@ describe("Plain account project fields", () => {
     });
     assert.equal((await client.thread("thread-example")).account, null);
   });
+});
+
+describe("Plain customer membership query", () => {
+  const account = {
+    id: "account-one",
+    name: "One",
+    accountFields: [
+      {
+        externalFieldId: "gcp_project_id",
+        value: { __typename: "AccountFieldStringValue", stringValue: "example-project" },
+      },
+      {
+        externalFieldId: "private_notes",
+        value: { __typename: "AccountFieldStringValue", stringValue: "internal-only" },
+      },
+    ],
+  };
+  for (const [count, hasNextPage, status] of [
+    [0, false, "none"],
+    [1, false, "sole"],
+    [2, false, "multiple"],
+    [1, true, "multiple"],
+  ] as const) {
+    it(`checks ${count} memberships with hasNextPage=${hasNextPage}`, async () => {
+      const client = createPlainClient({
+        apiKey: "test-key",
+        fetch: async (_url, init) => {
+          assert.ok(typeof init?.body === "string");
+          const request = z
+            .object({ query: z.string(), variables: z.object({ id: z.string() }) })
+            .parse(JSON.parse(init.body));
+          assert.match(request.query, /accountMemberships\(first: 2\)/u);
+          assert.equal(request.variables.id, "customer-one");
+          return Response.json({
+            data: {
+              customer: {
+                id: "customer-one",
+                accountMemberships: {
+                  edges: Array.from({ length: count }, (_, i) => ({
+                    node: { account: { ...account, id: `account-${i}` } },
+                  })),
+                  pageInfo: { hasNextPage },
+                },
+              },
+            },
+          });
+        },
+      });
+      const membership = await client.customerMembership("customer-one");
+      assert.equal(membership.status, status);
+      if (membership.status === "sole")
+        assert.deepEqual(membership.account.gcpProject, {
+          status: "valid",
+          projectId: "example-project",
+        });
+      assert.ok(!JSON.stringify(membership).includes("internal-only"));
+    });
+  }
 });

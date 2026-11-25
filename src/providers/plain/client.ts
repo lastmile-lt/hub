@@ -40,6 +40,23 @@ const accountSchema = z
     ...account,
     gcpProject: accountProject(accountFields),
   }));
+const membershipCustomerSchema = z.object({
+  customer: z
+    .object({
+      id,
+      accountMemberships: z.object({
+        edges: z.array(z.object({ node: z.object({ account: accountSchema }) })),
+        pageInfo: z.object({ hasNextPage: z.boolean() }),
+      }),
+    })
+    .nullable(),
+});
+const accountSelection = `id name accountFields {
+  externalFieldId value { __typename ... on AccountFieldStringValue { stringValue } }
+}`;
+export type PlainMembership =
+  | { status: "sole"; account: z.infer<typeof accountSchema> }
+  | { status: "none" | "multiple" | "unavailable" };
 const threadSchema = z.object({
   id,
   title: z.string(),
@@ -54,6 +71,8 @@ const threadSchema = z.object({
       z.object({
         node: z.object({
           id,
+          actor: z.object({ __typename: z.string() }).optional(),
+          entry: z.object({ __typename: z.string() }).optional(),
           llmText: z.string().nullable(),
           timestamp: z.object({ iso8601: z.string() }),
         }),
@@ -64,10 +83,39 @@ const threadSchema = z.object({
 });
 export type PlainDiscussion = z.infer<typeof discussionSchema>;
 export type PlainThread = z.infer<typeof threadSchema>;
+const draftStateSchema = z.object({
+  thread: z
+    .object({
+      id,
+      status: z.string(),
+      customer: z.object({ id }),
+      timelineEntries: z.object({
+        edges: z.array(
+          z.object({
+            node: z.object({
+              id,
+              timestamp: z.object({ iso8601: z.iso.datetime({ offset: true }) }),
+              actor: z.object({ __typename: z.string() }),
+            }),
+          }),
+        ),
+      }),
+    })
+    .nullable(),
+  generatedReplies: z.array(
+    z.object({
+      timelineEntryId: id.nullable(),
+      createdBy: z.object({ machineUserId: id.optional() }),
+    }),
+  ),
+});
 export interface PlainClient {
+  draftState(threadId: string): Promise<z.infer<typeof draftStateSchema>>;
+  addGeneratedReply(threadId: string, timelineEntryId: string, markdown: string): Promise<void>;
   identity(): Promise<{ workspaceId: string; agentId: string }>;
   discussion(id: string): Promise<PlainDiscussion>;
   thread(id: string): Promise<PlainThread>;
+  customerMembership(customerId: string): Promise<PlainMembership>;
   sendDiscussionMessage(id: string, content: string): Promise<void>;
   createNote(threadId: string, customerId: string, content: string): Promise<void>;
   setStatus(id: string, status: "IN_PROGRESS" | "IDLE"): Promise<void>;
@@ -124,6 +172,30 @@ export function createPlainClient(options: {
     if (result === undefined || result.error !== null) throw new Error("plain_mutation_error");
   }
   return {
+    async draftState(threadId) {
+      // Plain returns suggestions for the latest inbound message. Read only their provenance.
+      return draftStateSchema.parse(
+        await query(
+          `query($id: ID!) {
+          thread(threadId: $id) { id status customer { id }
+            timelineEntries(last: 1, filters: { isMessage: true }) {
+              edges { node { id timestamp { iso8601 } actor { __typename } } }
+            }
+          }
+          generatedReplies(threadId: $id) {
+            timelineEntryId createdBy { ... on MachineUserActor { machineUserId } }
+          }
+        }`,
+          { id: threadId },
+        ),
+      );
+    },
+    addGeneratedReply: (threadId, timelineEntryId, markdown) =>
+      mutate("addGeneratedReply", "AddGeneratedReplyInput", {
+        threadId,
+        timelineEntryId,
+        markdown,
+      }),
     async identity() {
       const data = identitySchema.parse(
         await query("query { myMachineUser { id } myWorkspace { id } }"),
@@ -142,13 +214,25 @@ export function createPlainClient(options: {
     },
     async thread(threadId) {
       const data = await query(
-        `query($id: ID!) { thread(threadId: $id) { id title account { id name
-          accountFields { externalFieldId value { __typename ... on AccountFieldStringValue { stringValue } } }
-        } customer { id fullName company { id name } }
-        timelineEntries(last: 50) { edges { node { id llmText timestamp { iso8601 } } } pageInfo { hasPreviousPage } } } }`,
+        `query($id: ID!) { thread(threadId: $id) { id title account { ${accountSelection} } customer { id fullName company { id name } }
+        timelineEntries(last: 50) { edges { node { id actor { __typename } entry { __typename } llmText timestamp { iso8601 } } } pageInfo { hasPreviousPage } } } }`,
         { id: threadId },
       );
       return z.object({ thread: threadSchema }).parse(data).thread;
+    },
+    async customerMembership(customerId) {
+      const data = await query(
+        `query($id: ID!) { customer(customerId: $id) { id accountMemberships(first: 2) {
+          edges { node { account { ${accountSelection} } } } pageInfo { hasNextPage }
+        } } }`,
+        { id: customerId },
+      );
+      const { customer } = membershipCustomerSchema.parse(data);
+      if (customer?.id !== customerId) return { status: "unavailable" };
+      const { edges, pageInfo: pagination } = customer.accountMemberships;
+      if (pagination.hasNextPage || edges.length > 1) return { status: "multiple" };
+      const first = edges[0];
+      return first ? { status: "sole", account: first.node.account } : { status: "none" };
     },
     sendDiscussionMessage: (discussionId, markdownContent) =>
       mutate("sendDiscussionMessage", "SendDiscussionMessageInput", {
