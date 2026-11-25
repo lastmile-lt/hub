@@ -40,6 +40,23 @@ const accountSchema = z
     ...account,
     gcpProject: accountProject(accountFields),
   }));
+const membershipCustomerSchema = z.object({
+  customer: z
+    .object({
+      id,
+      accountMemberships: z.object({
+        edges: z.array(z.object({ node: z.object({ account: accountSchema }) })),
+        pageInfo: z.object({ hasNextPage: z.boolean() }),
+      }),
+    })
+    .nullable(),
+});
+const accountSelection = `id name accountFields {
+  externalFieldId value { __typename ... on AccountFieldStringValue { stringValue } }
+}`;
+export type PlainMembership =
+  | { status: "sole"; account: z.infer<typeof accountSchema> }
+  | { status: "none" | "multiple" | "unavailable" };
 const threadSchema = z.object({
   id,
   title: z.string(),
@@ -68,6 +85,7 @@ export interface PlainClient {
   identity(): Promise<{ workspaceId: string; agentId: string }>;
   discussion(id: string): Promise<PlainDiscussion>;
   thread(id: string): Promise<PlainThread>;
+  customerMembership(customerId: string): Promise<PlainMembership>;
   sendDiscussionMessage(id: string, content: string): Promise<void>;
   createNote(threadId: string, customerId: string, content: string): Promise<void>;
   setStatus(id: string, status: "IN_PROGRESS" | "IDLE"): Promise<void>;
@@ -142,13 +160,25 @@ export function createPlainClient(options: {
     },
     async thread(threadId) {
       const data = await query(
-        `query($id: ID!) { thread(threadId: $id) { id title account { id name
-          accountFields { externalFieldId value { __typename ... on AccountFieldStringValue { stringValue } } }
-        } customer { id fullName company { id name } }
+        `query($id: ID!) { thread(threadId: $id) { id title account { ${accountSelection} } customer { id fullName company { id name } }
         timelineEntries(last: 50) { edges { node { id llmText timestamp { iso8601 } } } pageInfo { hasPreviousPage } } } }`,
         { id: threadId },
       );
       return z.object({ thread: threadSchema }).parse(data).thread;
+    },
+    async customerMembership(customerId) {
+      const data = await query(
+        `query($id: ID!) { customer(customerId: $id) { id accountMemberships(first: 2) {
+          edges { node { account { ${accountSelection} } } } pageInfo { hasNextPage }
+        } } }`,
+        { id: customerId },
+      );
+      const { customer } = membershipCustomerSchema.parse(data);
+      if (customer?.id !== customerId) return { status: "unavailable" };
+      const { edges, pageInfo: pagination } = customer.accountMemberships;
+      if (pagination.hasNextPage || edges.length > 1) return { status: "multiple" };
+      const first = edges[0];
+      return first ? { status: "sole", account: first.node.account } : { status: "none" };
     },
     sendDiscussionMessage: (discussionId, markdownContent) =>
       mutate("sendDiscussionMessage", "SendDiscussionMessageInput", {

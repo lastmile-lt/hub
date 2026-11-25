@@ -81,6 +81,9 @@ export async function fixture() {
         timelineEntries: { edges: [], pageInfo: { hasPreviousPage: false } },
       };
     },
+    async customerMembership() {
+      throw new Error("unexpected membership lookup for a linked or standalone investigation");
+    },
     async sendDiscussionMessage(...args) {
       calls.push(["discussion", ...args]);
     },

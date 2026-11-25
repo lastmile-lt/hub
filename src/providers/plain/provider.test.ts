@@ -489,3 +489,85 @@ it("keeps missing account fields and standalone discussions unmapped without gue
     });
   }
 });
+
+it("keeps membership candidates separate from confirmed projects and fails closed on ambiguity", async () => {
+  const f = await fixture();
+  const original = f.client.thread.bind(f.client);
+  f.client.thread = async (id) => {
+    const t = await original(id);
+    return {
+      ...t,
+      account: null,
+      customer: { ...t.customer, company: { id: "legacy", name: "Legacy" } },
+    };
+  };
+  const account = {
+    id: "member",
+    name: "Example",
+    gcpProject: { status: "valid", projectId: "example-project" },
+  } as const;
+  const accounts = {
+    legacy: { projects: ["legacy-project"], defaultProject: "legacy-project" },
+    member: { projects: ["example-project"] },
+  };
+  const provider = createPlainProvider({
+    ...f,
+    mapping: { accounts },
+    configurationStoreForProject: () => f.store,
+    connectionsForProject: () => {
+      throw new Error("unused");
+    },
+  });
+  const event = {
+    ...f.event,
+    source: "plain.note" as const,
+    discussionId: null,
+    threadId: "t_example",
+  };
+  const readMapping = async () =>
+    z
+      .object({
+        projectMapping: z.object({
+          status: z.string(),
+          candidateProject: z.string().optional(),
+          name: z.string().optional(),
+          defaultProject: z.string().optional(),
+          beforeCustomerDataRead: z.string().optional(),
+          reason: z.string().optional(),
+        }),
+      })
+      .parse(
+        await provider.materializeContext!({
+          executionId: "execution",
+          ...f.external,
+          triggerContext: {
+            provider: "plain",
+            event: { plain: event },
+            target: { provider: "plain", ...f.binding, event },
+          },
+        }),
+      ).projectMapping;
+  f.client.customerMembership = async (id) => {
+    assert.equal(id, "c_example");
+    return { status: "sole", account };
+  };
+  const candidate = await readMapping();
+  assert.equal(candidate.status, "candidate");
+  assert.equal(candidate.candidateProject, "example-project");
+  assert.equal(candidate.name, "Example");
+  assert.equal(candidate.defaultProject, undefined);
+  assert.match(String(candidate.beforeCustomerDataRead), /ask support/u);
+  accounts.member.projects = [];
+  assert.equal((await readMapping()).reason, "project_mapping_conflict");
+  for (const status of ["none", "multiple"] as const) {
+    f.client.customerMembership = async () => ({ status });
+    const mapping = await readMapping();
+    assert.equal(mapping.status, "unmapped");
+    assert.equal(mapping.candidateProject, undefined);
+    assert.equal(mapping.defaultProject, undefined);
+  }
+  f.client.customerMembership = async () => {
+    throw new Error("sensitive error");
+  };
+  assert.equal((await readMapping()).reason, "customer_membership_unavailable");
+});

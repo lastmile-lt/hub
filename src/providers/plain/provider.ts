@@ -145,7 +145,7 @@ export function createPlainProvider(
         plain: event,
         discussion,
         thread,
-        projectMapping: resolveMapping(options.mapping, thread),
+        projectMapping: await resolveMapping(options, thread),
         contextLimits: {
           entriesPerConversation: 50,
           complete:
@@ -187,15 +187,55 @@ export function createPlainProvider(
     },
   };
 }
-function resolveMapping(mapping: PlainAccountMapping | undefined, thread: PlainThread | null) {
+async function resolveMapping(
+  { client, mapping }: PlainProviderOptions,
+  thread: PlainThread | null,
+) {
   if (thread === null) return { status: "unmapped" as const };
-  const account = thread.account;
-  const accountId = account?.id ?? thread.customer.company?.id;
-  const match = accountId === undefined ? undefined : mapping?.accounts[accountId];
-  const field = account?.gcpProject;
-  if (field?.status === "invalid" || field?.status === "ambiguous")
+  if (thread.account !== null) return accountMapping(mapping, thread.account);
+
+  // Only the source customer can supply membership evidence. Never use the legacy company
+  // or select a membership because it happens to be the only one with a project field.
+  const membership = await client
+    .customerMembership(thread.customer.id)
+    .catch(() => ({ status: "unavailable" as const }));
+  if (membership.status !== "sole") {
+    return {
+      status: "unmapped" as const,
+      reason: `customer_membership_${membership.status}`,
+      nextAction: "ask_support_before_customer_data",
+    };
+  }
+  const account = membership.account;
+  if (account.gcpProject.status !== "valid")
+    return {
+      status: "unmapped" as const,
+      reason: `${account.gcpProject.status}_gcp_project_id`,
+      nextAction: "ask_support_before_customer_data",
+    };
+  const resolved = accountMapping(mapping, account);
+  if (resolved.status !== "mapped") return resolved;
+  // Existing prompts that accept only mapped/defaultProject must fail closed.
+  return {
+    status: "candidate" as const,
+    source: "sole_customer_membership",
+    accountId: account.id,
+    name: account.name,
+    candidateProject: account.gcpProject.projectId,
+    beforeCustomerDataRead:
+      "Verify the customer's request concerns this account. If it concerns another company or the scope is unclear, ask support to confirm the account before reading customer data.",
+  };
+}
+function accountMapping(
+  mapping: PlainAccountMapping | undefined,
+  account: NonNullable<PlainThread["account"]>,
+) {
+  const accountId = account.id;
+  const match = mapping?.accounts[accountId];
+  const field = account.gcpProject;
+  if (field.status === "invalid" || field.status === "ambiguous")
     return { status: "unmapped" as const, accountId, reason: `${field.status}_gcp_project_id` };
-  if (account && field?.status === "valid") {
+  if (field.status === "valid") {
     // A configured private mapping remains the boundary for allowed projects.
     if (mapping !== undefined && !match?.projects.includes(field.projectId))
       return { status: "unmapped" as const, accountId, reason: "project_mapping_conflict" };

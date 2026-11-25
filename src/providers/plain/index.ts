@@ -78,6 +78,10 @@ export async function createPlainRegistration(options: {
       requireVerified();
       return client.thread(id);
     },
+    customerMembership: (id) => {
+      requireVerified();
+      return client.customerMembership(id);
+    },
     sendDiscussionMessage: (id, content) => {
       requireVerified();
       return client.sendDiscussionMessage(id, content);
