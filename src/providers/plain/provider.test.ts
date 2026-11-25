@@ -78,6 +78,123 @@ describe("Plain internal investigations", () => {
     });
     assert.deepEqual(f.calls, [["note", "t_example", "c_example", "Findings"]]);
   });
+  async function draftFixture() {
+    const f = await fixture();
+    const event = {
+      ...f.event,
+      source: "plain.note" as const,
+      discussionId: null,
+      threadId: "t_example",
+      customerId: "c_example",
+      text: "[suggest-reply] Investigate",
+    };
+    const draft = { timelineEntryId: "entry", markdown: "¿Puedes confirmar el pedido?" };
+    const message = {
+      id: "entry",
+      timestamp: { iso8601: event.timestamp },
+      actor: { __typename: "CustomerActor" },
+    };
+    const thread = {
+      id: event.threadId,
+      status: "TODO",
+      customer: { id: event.customerId },
+      timelineEntries: { edges: [{ node: message }] },
+    };
+    const generatedReplies: { timelineEntryId: string; createdBy: { machineUserId: string } }[] =
+      [];
+    f.client.draftState = async () => ({ thread, generatedReplies });
+    const send = f.client.addGeneratedReply.bind(f.client);
+    f.client.addGeneratedReply = async (...args) => {
+      await send(...args);
+      generatedReplies.push({
+        timelineEntryId: args[1],
+        createdBy: { machineUserId: event.agentId },
+      });
+    };
+    const execute = () =>
+      createPlainReplyExecutor(f)({
+        agentExecutionId: "execution",
+        toolType: "plain.reply",
+        args: { content: "Internal evidence and draft heading", customerDraft: draft },
+        outputContext: { provider: "plain", ...f.binding, event },
+      });
+    return { f, event, draft, message, thread, execute };
+  }
+
+  it("uses the same workflow-written draft in the private note and composer, once per message", async () => {
+    const { f, draft, execute } = await draftFixture();
+    await Promise.all([execute(), execute()]);
+    assert.deepEqual(
+      f.calls.filter(([type]) => type === "suggestion"),
+      [["suggestion", "t_example", "entry", draft.markdown]],
+    );
+    assert.deepEqual(
+      f.calls.find(([type]) => type === "note"),
+      [
+        "note",
+        "t_example",
+        "c_example",
+        "Internal evidence and draft heading\n\n" + draft.markdown,
+      ],
+    );
+  });
+
+  it("makes a fresh suggestion for a follow-up carrying the requested information", async () => {
+    const { f, draft, message, event, execute } = await draftFixture();
+    await execute();
+    message.id = "follow-up";
+    message.timestamp.iso8601 = "2026-10-22T10:05:00Z";
+    event.timestamp = "2026-10-22T10:06:00Z";
+    draft.timelineEntryId = message.id;
+    draft.markdown = "Gracias por el número de pedido.";
+    await execute();
+    assert.deepEqual(
+      f.calls.filter(([kind]) => kind === "suggestion").map((call) => call.slice(2)),
+      [
+        ["entry", "¿Puedes confirmar el pedido?"],
+        ["follow-up", draft.markdown],
+      ],
+    );
+  });
+  it.each(["answered", "new-inbound", "closed", "after-trigger", "missing", "wrong-target"])(
+    "keeps the draft private when the target is %s",
+    async (reason) => {
+      const { f, draft, message, thread, execute } = await draftFixture();
+      if (reason === "answered") message.actor.__typename = "UserActor";
+      if (reason === "new-inbound") message.id = "newer-entry";
+      if (reason === "closed") thread.status = "DONE";
+      if (reason === "after-trigger") message.timestamp.iso8601 = "2026-10-22T11:00:00Z";
+      if (reason === "missing") thread.timelineEntries.edges.length = 0;
+      if (reason === "wrong-target") draft.timelineEntryId = "another-thread-entry";
+      await execute();
+      assert.deepEqual(
+        f.calls.map(([kind]) => kind),
+        ["note"],
+      );
+      assert.match(String(f.calls[0]?.[3]), /Composer suggestion skipped/u);
+    },
+  );
+  it("preserves the internal draft when generated reply access fails", async () => {
+    const { f, execute, draft } = await draftFixture();
+    f.client.addGeneratedReply = async () => {
+      throw new Error("private upstream error");
+    };
+    await execute();
+    assert.deepEqual(
+      f.calls.map(([kind]) => kind),
+      ["note"],
+    );
+    assert.ok(String(f.calls[0]?.[3]).endsWith(draft.markdown));
+    assert.doesNotMatch(String(f.calls[0]?.[3]), /private upstream/u);
+  });
+  it("requires an opted-in note and verifies the customer before suggesting anything", async () => {
+    const { f, event, thread, execute } = await draftFixture();
+    thread.customer.id = "somebody-else";
+    await assert.rejects(execute(), /plain_thread_customer_mismatch/u);
+    event.text = "Investigate";
+    await assert.rejects(execute(), /plain_draft_requires_opted_in_note/u);
+    assert.deepEqual(f.calls, []);
+  });
   it("persists stop-before-start suppression and rejects late output while allowing a later turn", async () => {
     const f = await fixture();
     await f.database.persistPlainEvent({

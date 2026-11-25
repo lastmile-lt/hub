@@ -126,3 +126,39 @@ Use only designated internal test discussions/threads for the pilot. Verify a wo
 The connector has mock API tests and embedded/PostgreSQL persistence tests. Run the repository checks in `MAINTAINERS.md`. The public documentation companion change belongs in `getpaseo/paseo/public-docs/` before upstream release; this fork's implementation note is available for engineer review first.
 
 Future customer-facing support should use a separate agent identity and explicitly added output capability, escalation policy, and evaluation suite. Internal discussion history must not become customer-facing session memory.
+
+## Optional composer suggestions and follow-up drafts
+
+Use a Plain **Add note** action with a real agent mention. Start the note with
+`[suggest-reply]` (the mention may precede it). Give the pilot key
+`generatedReply:read` and `generatedReply:create`. Write the investigation and drafting
+instructions in that action, including the customer language, wording, and when a draft is useful.
+A single `hub.reply` call accepts:
+
+```json
+{
+  "content": "Internal investigation and the workflow’s draft heading",
+  "customerDraft": {
+    "timelineEntryId": "id of the customer message from the thread context",
+    "markdown": "Exact customer-facing text, up to 5,000 characters"
+  }
+}
+```
+
+Hub appends the draft to the private note and offers the same Markdown as a Plain suggested
+reply. A teammate chooses the suggestion, edits it, and sends it. A blocked investigation,
+an internal discussion, or a request that already has an answer uses just `content`.
+When the note was requested, the target message must already have existed. Hub checks the
+latest message again before posting. A closed thread, a newer customer or staff message, and an
+existing suggestion by this agent for the same message suppress the composer write. The note
+includes the reason, or an access/availability notice if Plain could not confirm the suggestion.
+
+To share wording across initial and follow-up investigations, put the Add note step in one
+manual Plain workflow. Invoke that workflow from the existing Thread created workflow and from
+a Message added workflow. In the latter, require the latest message actor to be a customer, at
+least two customer messages and at least one teammate message. Use an AI condition to check
+that support publicly asked for missing information, the latest reply supplies material new
+information, and the request remains unresolved. A question appearing only in an internal
+draft, an acknowledgement, or an already answered request should end the workflow. Keep the
+follow-up workflow unpublished until the shared action and Hub connector have been tested.
+These workflows use the existing note-mention webhook.

@@ -269,13 +269,67 @@ async function deliver(
     await options.client.createNote(event.threadId, event.customerId, content);
   } else throw new Error("plain_reply_target_missing");
 }
+const customerDraftSchema = z
+  .object({
+    timelineEntryId: z.string().min(1),
+    markdown: z.string().min(1).max(5000).regex(/\S/u),
+  })
+  .strict();
+
+async function suggestDraft(
+  options: Pick<PlainProviderOptions, "database" | "client" | "binding">,
+  event: PlainEvent,
+  threadId: string,
+  draft: z.infer<typeof customerDraftSchema>,
+): Promise<string | undefined> {
+  const lock = JSON.stringify(["plain-draft", event.workspaceId, event.agentId, threadId]);
+  return options.database.withAdvisoryLock(lock, async () => {
+    const state = await options.client.draftState(threadId);
+    const thread = state.thread;
+    if (!thread || thread.id !== threadId || thread.customer.id !== event.customerId)
+      throw new Error("plain_thread_customer_mismatch");
+    const latest = thread.timelineEntries.edges[0]?.node;
+    if (
+      thread.status === "DONE" ||
+      latest?.id !== draft.timelineEntryId ||
+      latest.actor.__typename !== "CustomerActor" ||
+      Date.parse(latest.timestamp.iso8601) > Date.parse(event.timestamp)
+    ) {
+      return "Composer suggestion skipped. The thread closed or the draft no longer targets its latest customer message.";
+    }
+    if (
+      state.generatedReplies.some(
+        (reply) =>
+          reply.timelineEntryId === latest.id && reply.createdBy.machineUserId === event.agentId,
+      )
+    )
+      return "The composer already has this agent’s suggestion for this customer message.";
+    await assertNotStopped(options, event);
+    await options.client.addGeneratedReply(threadId, latest.id, draft.markdown);
+    return undefined;
+  });
+}
+
 export const plainReplyTool: OutputToolDefinition = {
   name: "reply",
   description:
     "Posts an INTERNAL reply to the originating Plain discussion or thread note. Never sends a customer message.",
   inputSchema: {
     type: "object",
-    properties: { content: { type: "string", minLength: 1, maxLength: 10000 } },
+    properties: {
+      content: { type: "string", minLength: 1, maxLength: 10000 },
+      customerDraft: {
+        type: "object",
+        description:
+          "Only for an internal note requesting [suggest-reply]. Give the customer message timeline ID and exact customer-facing draft (combined note and draft: 9,800 characters maximum). Hub appends that text to the internal note and offers it for human review. Put the investigation and optional draft heading in content.",
+        properties: {
+          timelineEntryId: { type: "string", minLength: 1 },
+          markdown: { type: "string", minLength: 1, maxLength: 5000 },
+        },
+        required: ["timelineEntryId", "markdown"],
+        additionalProperties: false,
+      },
+    },
     required: ["content"],
     additionalProperties: false,
   },
@@ -284,8 +338,11 @@ export function createPlainReplyExecutor(
   options: Pick<PlainProviderOptions, "database" | "client" | "binding">,
 ): OutputExecutor {
   return async (input) => {
-    const { content } = z
-      .object({ content: z.string().min(1).max(10000) })
+    const { content, customerDraft } = z
+      .object({
+        content: z.string().min(1).max(10000),
+        customerDraft: customerDraftSchema.optional(),
+      })
       .strict()
       .parse(input.args);
     const context = outputSchema.parse(input.outputContext);
@@ -304,7 +361,34 @@ export function createPlainReplyExecutor(
       })
     )
       throw new Error("stopped_by_user");
-    await deliver(options, context.event, content);
+    const event = context.event;
+    if (customerDraft === undefined) return deliver(options, event, content);
+    if (
+      event.source !== "plain.note" ||
+      !event.threadId ||
+      !event.customerId ||
+      !event.text.trimStart().startsWith("[suggest-reply]")
+    )
+      throw new Error("plain_draft_requires_opted_in_note");
+    // Plain caps each internal note at 10,000 characters. Leave space for the delivery notice.
+    const body = `${content}\n\n${customerDraft.markdown}`;
+    if (body.length > 9800) throw new Error("plain_combined_note_and_draft_exceeds_9800");
+    let notice: string | undefined;
+    try {
+      notice = await suggestDraft(options, event, event.threadId, customerDraft);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ["stopped_by_user", "plain_thread_customer_mismatch"].includes(error.message)
+      )
+        throw error;
+      // A transport failure may mean Plain accepted the mutation. Preserve the draft and
+      // avoid blindly retrying a non-idempotent write.
+      notice =
+        "Could not confirm the composer suggestion. Check Plain access to read and create generated replies. The draft is below.";
+    }
+    const note = notice ? `${notice}\n\n${body}` : body;
+    await deliver(options, event, note);
   };
 }
 

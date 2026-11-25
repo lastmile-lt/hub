@@ -15,15 +15,20 @@ describe("Plain internal API client", () => {
           .parse(JSON.parse(init.body));
         operations.push(body.variables);
         assert.equal(/replyToThread|sendEmail|impersonation/u.test(body.query), false);
-        const field = body.query.includes("createNote") ? "createNote" : "sendDiscussionMessage";
+        const field = ["createNote", "sendDiscussionMessage", "addGeneratedReply"].find((name) =>
+          body.query.includes(name),
+        );
+        assert.ok(field);
         return Response.json({ data: { [field]: { error: null } } });
       },
     });
     await client.createNote("t_one", "c_one", "Internal");
     await client.sendDiscussionMessage("d_one", "Internal");
+    await client.addGeneratedReply("t_one", "entry_one", "Draft");
     assert.deepEqual(operations, [
       { input: { threadId: "t_one", customerId: "c_one", text: "Internal", markdown: "Internal" } },
       { input: { discussionId: "d_one", markdownContent: "Internal" } },
+      { input: { threadId: "t_one", timelineEntryId: "entry_one", markdown: "Draft" } },
     ]);
   });
   it("treats GraphQL and mutation errors as failures without leaking their bodies", async () => {

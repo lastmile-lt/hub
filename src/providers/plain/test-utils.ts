@@ -81,6 +81,12 @@ export async function fixture() {
         timelineEntries: { edges: [], pageInfo: { hasPreviousPage: false } },
       };
     },
+    async draftState() {
+      throw new Error("unexpected draft lookup");
+    },
+    async addGeneratedReply(...args) {
+      calls.push(["suggestion", ...args]);
+    },
     async customerMembership() {
       throw new Error("unexpected membership lookup for a linked or standalone investigation");
     },
