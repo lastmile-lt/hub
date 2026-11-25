@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0-pickitoo.7 - 2026-11-25
+
+### Added
+
+- Plain investigations read the linked account's `gcp_project_id` string field and expose a valid project ID as `projectMapping.defaultProject` (`source: plain_account_field`) in `paseo.context`, for both discussions and note mentions. Invalid, empty or duplicate values return `status: unmapped` with a reason; a missing field keeps the private YAML mapping fallback, and a configured private mapping must allow the project. Other account fields are not passed to the agent. See `docs/plain.md`.
+
+### Upgrade notes
+
+- Add `accountField:read` to the Plain agent API key before deploying: the thread query now reads account fields, and without the permission Plain thread reads (context and note replies) fail.
+
 ## 0.10.0-pickitoo.6 - 2026-11-19
 
 ### Added
