@@ -4,7 +4,7 @@ This connector handles internal Plain agent discussions (including standalone an
 
 ## Configure an isolated pilot
 
-Create a dedicated Plain agent machine user and API key. Enable `threadDiscussion:read`, `threadDiscussion:edit`, `threadDiscussionMessage:create`, `threadDiscussionMessage:edit`, `thread:read`, `customer:read`, and `note:create`. Do not grant `thread:reply`, `email:create`, or impersonation. Reading account metadata may require the corresponding account read permission in your workspace.
+Create a dedicated Plain agent machine user and API key. Enable `threadDiscussion:read`, `threadDiscussion:edit`, `threadDiscussionMessage:read`, `threadDiscussionMessage:create`, `threadDiscussionMessage:edit`, `thread:read`, `customer:read`, `account:read`, `accountField:read`, `company:read`, `timeline:read`, and `note:create`. Do not grant `thread:reply`, `email:create`, or impersonation. Existing installations must add `accountField:read` before upgrading to account-field project selection.
 
 Set the environment variables listed in `.env.example`. All six required values must be provided together. Use the organization ID and the trigger ID from Hub. Create and save the trigger before enabling these environment settings. If the configuration is invalid or the trigger cannot be found at startup, Hub logs an error and starts without Plain; fix the configuration and restart. These are Hub IDs, not Firebase project IDs. The API key's workspace and machine user must match the configured IDs; background startup verification checks both. Until verification succeeds, Plain webhooks return HTTP 503 and Plain API operations remain unavailable; other Hub integrations can start normally. Failed verification retries every 30 seconds. This initial version binds one Plain workspace and agent to one Hub organization trigger. It is configured through the server environment, not OAuth in the Connections screen.
 
@@ -60,7 +60,36 @@ Replies are scoped to the triggering discussion or note thread. Discussion and n
 
 ## Account-to-project context
 
-Set `PLAIN_HUB_ACCOUNT_MAPPING_PATH` to an external private YAML file:
+For account-managed project selection, add a string account field with external ID `gcp_project_id`
+in Plain. Hub reads it from the account linked to the triggering thread, for both discussions and
+note mentions. One valid project ID produces `projectMapping.status: mapped`,
+`projectMapping.source: plain_account_field`, and `projectMapping.defaultProject` in
+`${{ paseo.context }}`. Hub trims surrounding whitespace and accepts 6–30-character IDs starting
+with a lowercase letter, containing lowercase letters, digits or hyphens, and ending in a letter
+or digit. It does not infer projects from customer names, email domains or message text.
+
+Unrelated account fields and invalid raw values are not passed to the agent. Empty or invalid
+values and duplicate `gcp_project_id` fields produce an unmapped result with a reason. A missing
+field keeps the existing private mapping fallback. Without a field or matching private mapping,
+the agent must ask for the project. Standalone discussions without a linked thread have no
+account to resolve.
+
+Workflows can use the resolved project as explicit account context, subject to their own
+project-selection policy. For example, an operator-authorized read-only investigation prompt can say:
+
+```text
+Use projectMapping.defaultProject from the supplied context when projectMapping.status is mapped
+and the account mapping is authorized by this workspace's investigation policy. Confirm that the
+active Firebase project and read-only service-account identity match before reading Firestore.
+If the mapping is missing, invalid or conflicting, ask support; do not guess or reuse an earlier
+conversation's project. Continue code/documentation investigation without customer-data reads.
+```
+
+The field is configuration, not a grant of IAM access or permission to bypass workspace rules.
+Restrict who can edit it in Plain. Existing explicit-project-confirmation policies must be updated
+by the operator before unattended selection is allowed.
+
+For a private mapping or an additional allowed-project boundary, set `PLAIN_HUB_ACCOUNT_MAPPING_PATH` to an external private YAML file:
 
 ```yaml
 accounts:
@@ -70,7 +99,7 @@ accounts:
     defaultProject: example-test
 ```
 
-Keys are stable Plain account IDs. Legacy company IDs are used only when the thread has no account. Missing mappings produce `status: unmapped`; there is no repo-default fallback. A default must belong to the allowed list. Values can be project IDs or aliases understood by your private tooling. Mapping is read on startup and exposed only through the explicitly requested `paseo.context`. It does not select a Firebase environment or grant access; your existing tools and investigation rules still apply. A standalone discussion without a linked thread needs the operator to provide its account/project context.
+Keys are stable Plain account IDs. Legacy company IDs are used only when the thread has no account. Missing mappings produce `status: unmapped`; there is no repo-default fallback. A default must belong to the allowed list. Values can be project IDs or aliases understood by your private tooling. When the account field is present, a configured private mapping must contain that account and include its project; otherwise the result is unmapped with `project_mapping_conflict`. An allowed field value selects the project even if the private mapping has a different default. The private mapping is read on startup; the Plain account field is fetched for each investigation. Both are exposed only through the explicitly requested `paseo.context`. It does not select a Firebase environment or grant access; your existing tools and investigation rules still apply. A standalone discussion without a linked thread needs the operator to provide its account/project context.
 
 ## Limits and verification
 
